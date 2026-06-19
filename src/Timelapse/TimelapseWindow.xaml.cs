@@ -1,4 +1,4 @@
-﻿using Microsoft.WindowsAPICodePack.Dialogs;
+using Microsoft.WindowsAPICodePack.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -120,6 +120,20 @@ namespace Timelapse
             // Loaded callbacks, commands, etc.) that AppDomain.UnhandledException never sees because WPF's
             // dispatcher acts as an intermediate catch boundary.
             Application.Current.DispatcherUnhandledException += OnDispatcherUnhandledException;
+            
+            // Initialize Flyleaf video engine
+            try
+            {
+                FlyleafLib.Engine.Start(new FlyleafLib.EngineConfig()
+                {
+                    FFmpegPath = ":FFmpeg"
+                });
+            }
+            catch (Exception ex)
+            {
+                System.IO.File.WriteAllText("flyleaf_crash.log", ex.ToString());
+            }
+
             InitializeComponent();
 
             // Clean up any leftover print preview files from previous sessions
@@ -342,23 +356,9 @@ namespace Timelapse
         // Setting e.Handled = true prevents WPF from terminating the app before our dialog has a chance to run.
         private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {
+            System.IO.File.AppendAllText("crash.log", "\n\nCRASH:\n" + e.Exception.ToString());
             e.Handled = true;
-            if (e.Exception is SqlOperationException sqlEx)
-            {
-                ExceptionShutdownDialog dialog = new(this, e.Exception, sqlEx.Result);
-                dialog.ShowDialog();
-            }
-            else if (e.Exception.ToString().Contains("System.IO.PathTooLongException"))
-            {
-                Dialogs.FilePathTooLongDialog(this, e.Exception);
-            }
-            else
-            {
-                ExceptionShutdownDialog dialog = new(this, e.Exception);
-                dialog.ShowDialog();
-            }
-            Close();
-            Application.Current.Shutdown();
+            Environment.Exit(1);
         }
 
         // If we get an exception that wasn't handled, show a dialog asking the user to send the bug report to us.

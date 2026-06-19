@@ -708,6 +708,8 @@ namespace Timelapse.Constant
 
         public const string VideoAutoPlay = "VideoAutoPlay";
         public const string VideoSpeed = "VideoSpeed";
+        public const string VideoFastForwardSpeed = "VideoFastForwardSpeed";
+        public const string VideoRewindSpeed = "VideoRewindSpeed";
         public const string VideoRepeat = "VideoRepeat";
         public const string VideoMute = "VideoMute";
 

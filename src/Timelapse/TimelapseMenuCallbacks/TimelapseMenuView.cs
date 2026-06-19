@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Input;
 using Timelapse.DebuggingSupport;
 using Timelapse.Dialog;

@@ -67,6 +67,8 @@ namespace Timelapse.State
         public bool VideoRepeat { get; set; }
         public bool VideoMute { get; set; }
         public int VideoSpeed { get; set; }
+        public double VideoFastForwardSpeed { get; set; }
+        public double VideoRewindSpeed { get; set; }
         public Dictionary<string, string> FlagShortcutKeys { get; set; } = new();
         #endregion
 
@@ -261,6 +263,8 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.VideoMute, VideoMute);
             registryKey.Write(WindowRegistryKeys.VideoRepeat, VideoRepeat);
             registryKey.Write(WindowRegistryKeys.VideoSpeed, VideoSpeed);
+            registryKey.Write(WindowRegistryKeys.VideoFastForwardSpeed, VideoFastForwardSpeed);
+            registryKey.Write(WindowRegistryKeys.VideoRewindSpeed, VideoRewindSpeed);
 
             try
             {

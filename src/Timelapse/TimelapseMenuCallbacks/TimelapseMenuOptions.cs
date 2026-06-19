@@ -73,6 +73,14 @@ namespace Timelapse
         }
         #endregion
 
+        #region Adjust VideoPlayer playback speeds
+        private void MenuItemVideoPlayerOptions_Click(object sender, RoutedEventArgs e)
+        {
+            VideoPlayerOptions videoPlayerOptions = new(State, this);
+            videoPlayerOptions.ShowDialog();
+        }
+        #endregion
+
         #region Episode AdjustThreshold
 
 

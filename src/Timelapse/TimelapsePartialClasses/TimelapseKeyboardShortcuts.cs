@@ -52,6 +52,15 @@ namespace Timelapse
         // Thus we have to implement our own version of it
         private void Window_PreviewKeyUp(object sender, KeyEventArgs currentKey)
         {
+            // Stop video speed changes
+            if (currentKey.Key == Key.Up || currentKey.Key == Key.Down)
+            {
+                if (MarkableCanvas.VideoPlayer.IsVisible && null != MarkableCanvas.VideoPlayer.SourceUri)
+                {
+                    MarkableCanvas.VideoPlayer.StopSpeedChange();
+                }
+            }
+
             // Force the end of a key repeat cycle
             State.ResetKeyRepeat();
 
@@ -343,6 +352,17 @@ namespace Timelapse
 
                 case Key.Up:
                 case Key.Down:
+                    // If not Ctrl, handle video speed here
+                    if (!IsCondition.IsKeyControlDown())
+                    {
+                        if (MarkableCanvas.VideoPlayer.IsVisible && null != MarkableCanvas.VideoPlayer.SourceUri)
+                        {
+                            if (currentKey.Key == Key.Up) MarkableCanvas.VideoPlayer.StartFastForward();
+                            else MarkableCanvas.VideoPlayer.StartRewind();
+                            currentKey.Handled = true;
+                        }
+                        break;
+                    }
                     // See  constraints to Left/Right arrow keys, as similar constraints apply here.
                     // Single view 
                     // - Up/Down image processing

@@ -320,6 +320,7 @@
 
                     <MenuItem Name="MenuItemImageAdjuster" Header="_Adjust image appearance&#x2026;" Click="MenuItemImageAdjuster_Click" IsEnabled="False" ToolTip="Temporarily adjust the brightness, contrast, gamma, sharpness or edging of the displayed image"/>
                     <MenuItem Name="MenuItemFilePlayerOptions" Header="_Adjust FilePlayer playback speeds&#x2026;" Click="MenuItemFilePlayerOptions_Click" IsEnabled="True" ToolTip="File Player options to adjust the image display speed"/>
+                    <MenuItem Name="MenuItemVideoPlayerOptions" Header="_Adjust VideoPlayer playback speeds&#x2026;" Click="MenuItemVideoPlayerOptions_Click" IsEnabled="True" ToolTip="Video Player options to adjust fast-forward and rewind speed"/>
                     <MenuItem Name="MenuItemEpisodeOptions" 
                               Header="_Adjust episode time threshold&#x2026;" 
                               Click="MenuItemEpisodeOptions_Click" 

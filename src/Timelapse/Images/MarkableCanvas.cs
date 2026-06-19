@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -1423,7 +1423,7 @@ namespace Timelapse.Images
                     break;
                 case Key.R:
                     // Try going to the best frame, if there is one
-                    if (VideoPlayer.IsVisible && null != VideoPlayer?.MediaElement?.Source)
+                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
                     {
                         VideoPlayer.TryGoToBestFrame();
                     }
@@ -1431,11 +1431,27 @@ namespace Timelapse.Images
                 //case Key.F5:
                 // TODO: This may no longer be needed
                 //    // Refresh the video, if one is showing
-                //    if (VideoPlayer.IsVisible && null != VideoPlayer?.MediaElement?.Source)
+                //    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
                 //    {
                 //        VideoPlayer.TryRefreshSource();
                 //    }
                 //    break;
+                case Key.Up:
+                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
+                    {
+                        System.IO.File.AppendAllText("speed_debug.txt", "MarkableCanvas Key.Up received!\n");
+                        VideoPlayer.StartFastForward();
+                        e.Handled = true;
+                    }
+                    break;
+                case Key.Down:
+                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
+                    {
+                        System.IO.File.AppendAllText("speed_debug.txt", "MarkableCanvas Key.Down received!\n");
+                        VideoPlayer.StartRewind();
+                        e.Handled = true;
+                    }
+                    break;
                 case Key.H:
                     // Will hide detection boxes, if any
                     if (!e.IsRepeat)
@@ -1467,6 +1483,15 @@ namespace Timelapse.Images
         // If its an H, RedrawBoundingBoxes will show the detection boxes
         private void MarkableCanvas_PreviewKeyUp(object sender, KeyEventArgs e)
         {
+            if (e.Key == Key.Up || e.Key == Key.Down)
+            {
+                if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
+                {
+                    VideoPlayer.StopSpeedChange();
+                    e.Handled = true;
+                }
+            }
+
             switch (e.Key)
             {
                 case Key.H:

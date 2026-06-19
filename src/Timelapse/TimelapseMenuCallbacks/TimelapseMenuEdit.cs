@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -449,7 +449,7 @@ namespace Timelapse
             {
                 // Get the time of the current video frame, then correct it by subtracting half the time of a frame
                 // This seems that the best way to get the correct frame. Not sure why, but it seems to work
-                TimeSpan timeSpanVideoPosition = this.MarkableCanvas.VideoPlayer.MediaElement.Position;
+                TimeSpan timeSpanVideoPosition = this.MarkableCanvas.VideoPlayer.MediaElementCurrentPosition;
                 float videoPositionInSeconds = (float)timeSpanVideoPosition.TotalSeconds;
                 float? frameRate = this.MarkableCanvas.VideoPlayer.FrameRate;
                 if (frameRate == null || frameRate <= 0)
