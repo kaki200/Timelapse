@@ -121,9 +121,9 @@
   <ItemGroup>
     <!-- Essential .NET 8 compatible packages -->
     <!-- Using modified TimelapseWpf.Toolkit instead of NuGet package -->
-    <PackageReference Include="LibVLCSharp" Version="3.9.0" />
-    <PackageReference Include="LibVLCSharp.WPF" Version="3.9.0" />
-    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+    <PackageReference Include="Flyleaf.FFmpeg" Version="8.0.0.1" />
+    <PackageReference Include="FlyleafLib" Version="3.10.4" />
+    <PackageReference Include="FlyleafLib.Controls.WPF" Version="1.6.4" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
     <PackageReference Include="Dirkster.AvalonDock" Version="4.72.1" />
