@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Windows;
 using Microsoft.Win32;
 using Timelapse.Constant;
@@ -66,6 +67,7 @@ namespace Timelapse.State
         public bool VideoRepeat { get; set; }
         public bool VideoMute { get; set; }
         public int VideoSpeed { get; set; }
+        public Dictionary<string, string> FlagShortcutKeys { get; set; } = new();
         #endregion
 
         #region Constructors
@@ -143,6 +145,19 @@ namespace Timelapse.State
             VideoMute = registryKey.GetBoolean(WindowRegistryKeys.VideoMute, false);
             VideoRepeat = registryKey.GetBoolean(WindowRegistryKeys.VideoRepeat, false);
             VideoSpeed = registryKey.GetInteger(WindowRegistryKeys.VideoSpeed, 2);
+
+            string flagKeysJson = registryKey.GetString(WindowRegistryKeys.FlagShortcutKeys, string.Empty);
+            if (!string.IsNullOrEmpty(flagKeysJson))
+            {
+                try
+                {
+                    FlagShortcutKeys = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, string>>(flagKeysJson) ?? new();
+                }
+                catch
+                {
+                    FlagShortcutKeys = new();
+                }
+            }
         }
 
         /// <summary>
@@ -246,6 +261,13 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.VideoMute, VideoMute);
             registryKey.Write(WindowRegistryKeys.VideoRepeat, VideoRepeat);
             registryKey.Write(WindowRegistryKeys.VideoSpeed, VideoSpeed);
+
+            try
+            {
+                string flagKeysJson = Newtonsoft.Json.JsonConvert.SerializeObject(FlagShortcutKeys);
+                registryKey.Write(WindowRegistryKeys.FlagShortcutKeys, flagKeysJson);
+            }
+            catch { }
         }
 
         /// <summary>

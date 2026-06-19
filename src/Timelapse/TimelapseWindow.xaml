@@ -1,4 +1,4 @@
-﻿<Window x:Class="Timelapse.TimelapseWindow"
+<Window x:Class="Timelapse.TimelapseWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:controls="clr-namespace:Timelapse.Controls"
     xmlns:images="clr-namespace:Timelapse.Images"
@@ -333,6 +333,7 @@
                     <Separator/>
 
                     <MenuItem Name="MenuItemPreferences" Header="Preferences&#x2026;" Click="MenuItemPreferences_Click" IsEnabled="True" ToolTip="Other Timelapse configuration options you can set"/>
+                    <MenuItem Name="MenuItemShortcutKeys" Header="Configure shortcut keys for flags&#x2026;" Click="MenuItemShortcutKeys_Click" IsEnabled="True" ToolTip="Assign keyboard shortcuts to Checkbox controls (Flags)"/>
 
 
 

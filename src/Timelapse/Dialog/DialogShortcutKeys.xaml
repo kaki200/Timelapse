@@ -1,0 +1,45 @@
+<Window x:Class="Timelapse.Dialog.DialogShortcutKeys"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Timelapse.Dialog"
+        mc:Ignorable="d"
+        Title="Configure Shortcut Keys for Flags" Height="400" Width="450" WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Assign keyboard shortcuts to Checkbox (Flag) controls. Click inside a text box and press the desired key." TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+        <DataGrid x:Name="ShortcutGrid" Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Checkbox Label" Binding="{Binding Label}" IsReadOnly="True" Width="2*"/>
+                <DataGridTemplateColumn Header="Shortcut Key" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBox Text="{Binding ShortcutKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                     PreviewKeyDown="TextBox_PreviewKeyDown" 
+                                     HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Margin="2" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Width="Auto">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Content="Clear" Click="ClearButton_Click" Margin="2"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="OK" Width="80" Click="OkButton_Click" Margin="0,0,10,0" IsDefault="True"/>
+            <Button Content="Cancel" Width="80" Click="CancelButton_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows.Documents;
 using Timelapse.Constant;
 using Timelapse.Database;
+using Timelapse.DataStructures;
 using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
 using Timelapse.Enums;
@@ -248,8 +249,43 @@ namespace Timelapse.ControlsDataEntry
             ThrowIf.IsNullArgument(dataEntryPropagator, nameof(dataEntryPropagator));
             dataEntryPropagator.SetDataEntryCallbacks(ControlsByDataLabelThatAreVisible);
             dataEntryHandler = dataEntryPropagator;
+            
+            UpdateShortcutLabels();
         }
         #endregion
+
+        public void UpdateShortcutLabels()
+        {
+            if (dataEntryHandler?.FileDatabase?.Controls == null) return;
+            var flagShortcuts = GlobalReferences.TimelapseState?.FlagShortcutKeys;
+            
+            foreach (var control in Controls)
+            {
+                if (control is DataEntryFlag flagControl)
+                {
+                    var controlRow = dataEntryHandler.FileDatabase.Controls.FirstOrDefault(c => c.DataLabel == flagControl.DataLabel);
+                    if (controlRow != null)
+                    {
+                        string baseLabel = string.IsNullOrEmpty(controlRow.Label) ? controlRow.DataLabel : controlRow.Label;
+                        if (flagShortcuts != null)
+                        {
+                            if (flagShortcuts.TryGetValue(flagControl.DataLabel, out string shortcut) && !string.IsNullOrEmpty(shortcut))
+                            {
+                                flagControl.LabelControl.Content = $"{baseLabel} ({shortcut})";
+                            }
+                            else
+                            {
+                                flagControl.LabelControl.Content = baseLabel;
+                            }
+                        }
+                        else
+                        {
+                            flagControl.LabelControl.Content = baseLabel;
+                        }
+                    }
+                }
+            }
+        }
 
         public void Reset()
         {

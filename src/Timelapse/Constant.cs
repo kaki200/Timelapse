@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Windows;
@@ -610,6 +610,8 @@ namespace Timelapse.Constant
     // Various keys used to access and save state in the Windows Registry
     public static class WindowRegistryKeys
     {
+        public const string FlagShortcutKeys = "FlagShortcutKeys";
+
         // Defines the KEY path under HKEY_CURRENT_USER where Timelapse registry information is stored
         public const string RootKey = @"Software\Greenberg Consulting\Timelapse\2.0";
 

@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using Timelapse.DataStructures;
 using Timelapse.Dialog;
 using Timelapse.Enums;
@@ -124,6 +124,18 @@ namespace Timelapse
             if (DataHandler != null)
             {
                 FileShow(DataHandler.ImageCache.CurrentRow, true);
+            }
+        }
+        #endregion
+
+        #region Shortcut Keys
+        private void MenuItemShortcutKeys_Click(object sender, RoutedEventArgs e)
+        {
+            DialogShortcutKeys dialog = new(this);
+            bool? result = dialog.ShowDialog();
+            if (result == true)
+            {
+                DataEntryControls?.UpdateShortcutLabels();
             }
         }
         #endregion

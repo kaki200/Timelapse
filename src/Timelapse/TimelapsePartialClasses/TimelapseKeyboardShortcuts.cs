@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Forms;
@@ -123,6 +123,43 @@ namespace Timelapse
 
             // Now test for particular shortcut keys and take the appropriate action as needed
             int keyRepeatCount = State.GetKeyRepeatCount(currentKey);
+
+            // Check for Flag Shortcut Keys
+            Key actualKey = currentKey.Key == Key.System ? currentKey.SystemKey : currentKey.Key;
+            string keyStr = "";
+            var modifiers = Keyboard.Modifiers;
+            if ((modifiers & ModifierKeys.Control) == ModifierKeys.Control) keyStr += "Ctrl+";
+            if ((modifiers & ModifierKeys.Shift) == ModifierKeys.Shift) keyStr += "Shift+";
+            if ((modifiers & ModifierKeys.Alt) == ModifierKeys.Alt) keyStr += "Alt+";
+            keyStr += actualKey.ToString();
+            if (State.FlagShortcutKeys != null && State.FlagShortcutKeys.ContainsValue(keyStr) && State.IsViewOnly == false)
+            {
+                if (currentKey.IsRepeat == false)
+                {
+                    bool shortcutHandled = false;
+                    foreach (var kvp in State.FlagShortcutKeys)
+                    {
+                        if (kvp.Value == keyStr)
+                        {
+                            if (DataEntryControls.ControlsByDataLabelThatAreVisible.TryGetValue(kvp.Key, out var control) && control.IsContentControlEnabled)
+                            {
+                                if (control is Timelapse.ControlsDataEntry.DataEntryFlag flagControl)
+                                {
+                                    bool isChecked = flagControl.ContentControl.IsChecked ?? false;
+                                    flagControl.ContentControl.IsChecked = !isChecked;
+                                    shortcutHandled = true;
+                                }
+                            }
+                        }
+                    }
+                    if (shortcutHandled)
+                    {
+                        currentKey.Handled = true;
+                        return;
+                    }
+                }
+            }
+
             switch (currentKey.Key)
             {
                 case Key.F:
