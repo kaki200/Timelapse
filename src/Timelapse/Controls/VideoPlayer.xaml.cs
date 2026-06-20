@@ -78,13 +78,14 @@ namespace Timelapse.Controls
             this.FlyleafHostActive.Player = this.playerActive;
             this.FlyleafHostBackground.Player = this.playerBackground;
             this.playerActive.OpenCompleted += PlayerActive_OpenCompleted;
+            this.playerActive.PlaybackStopped += MediaElementMediaEnded;
             
 
 
             this.isProgrammaticUpdate = false;
 
             // Initialize the timer that updates the UI to reflect the current video position 
-            this.TimerUpdatePosition = new() { Interval = TimeSpan.FromMilliseconds(125.0) };
+            this.TimerUpdatePosition = new() { Interval = TimeSpan.FromMilliseconds(33.0) };
 
             // Rendering initialization
             this.VideoScale = new(1.0, 1.0);
@@ -148,6 +149,7 @@ namespace Timelapse.Controls
 
             this.SliderScrubbing.ValueChanged += SliderScrubbing_ValueChanged;
             this.SliderScrubbing.PreviewMouseDown += SliderScrubbing_PreviewMouseDown;
+            this.SliderScrubbing.PreviewMouseUp += SliderScrubbing_PreviewMouseUp;
 
             this.PlayOrPause.Click += PlayOrPause_Click;
 
@@ -305,7 +307,9 @@ namespace Timelapse.Controls
 
                 // Re-hook events
                 this.playerBackground.OpenCompleted -= PlayerActive_OpenCompleted;
+                this.playerBackground.PlaybackStopped -= MediaElementMediaEnded;
                 this.playerActive.OpenCompleted += PlayerActive_OpenCompleted;
+                this.playerActive.PlaybackStopped += MediaElementMediaEnded;
 
                 this.SourceUri = source;
                 this.preloadedUri = null;
@@ -354,6 +358,7 @@ namespace Timelapse.Controls
             // Set the video, slider and feedback text to the desired start time.
             this.isProgrammaticUpdate = true;
             this.SliderScrubbing.Value = startTime.TotalSeconds; // This will be set in ShowPosition so no need to do it here.
+            this.MediaElementCurrentPosition = startTime;
             this.isProgrammaticUpdate = false;
 
             // Update the slider as needed
@@ -381,15 +386,25 @@ namespace Timelapse.Controls
 
         // When the video finishes playing, pause it and automatically return it to the beginning
         // Repeat playing if Auto play is on
-        private void MediaElementMediaEnded(object sender, RoutedEventArgs e)
+        private void MediaElementMediaEnded(object sender, FlyleafLib.MediaPlayer.PlaybackStoppedArgs e)
         {
-            this.Pause();
-
-            SliderScrubbing.Value = SliderScrubbing.Minimum; // Go back to the beginning
-            if (CBRepeat.IsChecked == true)
+            System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                this.Play();
-            }
+                if (this.playerActive != null && this.playerActive.Duration > 0)
+                {
+                    // Check if it reached the end (within 0.5 sec)
+                    if (this.playerActive.CurTime >= this.playerActive.Duration - 5000000)
+                    {
+                        this.Pause();
+
+                        SliderScrubbing.Value = SliderScrubbing.Minimum; // Go back to the beginning
+                        if (CBRepeat.IsChecked == true)
+                        {
+                            this.Play();
+                        }
+                    }
+                }
+            });
         }
 
         // Stop all timers and diable the video player controls
@@ -697,7 +712,7 @@ namespace Timelapse.Controls
             {
                 if (this.playerActive != null && this.isSpeedChanged && this.targetFFRWSpeed != 0)
                 {
-                    long deltaTicks = (long)(TimeSpan.FromMilliseconds(125).Ticks * this.targetFFRWSpeed);
+                    long deltaTicks = (long)(TimeSpan.FromMilliseconds(33).Ticks * this.targetFFRWSpeed);
                     long newCurTime = this.playerActive.CurTime + deltaTicks;
                     long durationTicks = this.playerActive.Duration;
 
@@ -711,7 +726,6 @@ namespace Timelapse.Controls
                         {
                             newCurTime = 0;
                             this.targetFFRWSpeed = 0;
-                            this.wasPaused = true;
                         }
                     }
                     else
@@ -745,14 +759,27 @@ namespace Timelapse.Controls
             {
                 this.FrameToShow = Convert.ToInt32(System.Math.Floor((double)(SliderScrubbing.Value * this.FrameRate)));
             }
-            // Pause also updates the position
-            this.Pause(); // If a user scrubs, force the video to pause if its playing
+            if (this.playerActive != null && !this.playerActive.IsPlaying)
+            {
+                this.ShowPosition();
+            }
         }
 
         // When the user starts moving the slider, we want to pause the video so the two actions don't interfere with each other
+        private bool wasPlayingBeforeScrubbing = false;
         private void SliderScrubbing_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
+            this.wasPlayingBeforeScrubbing = this.playerActive?.IsPlaying ?? false;
             this.Pause();
+        }
+
+        private void SliderScrubbing_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (this.wasPlayingBeforeScrubbing)
+            {
+                this.Play();
+            }
+            this.wasPlayingBeforeScrubbing = false;
         }
         #endregion
 

@@ -67,8 +67,8 @@ namespace Timelapse.State
         public bool VideoRepeat { get; set; }
         public bool VideoMute { get; set; }
         public int VideoSpeed { get; set; }
-        public double VideoFastForwardSpeed { get; set; }
-        public double VideoRewindSpeed { get; set; }
+        public double VideoFastForwardSpeed { get; set; } = 16;
+        public double VideoRewindSpeed { get; set; } = 16;
         public Dictionary<string, string> FlagShortcutKeys { get; set; } = new();
         #endregion
 
@@ -147,6 +147,10 @@ namespace Timelapse.State
             VideoMute = registryKey.GetBoolean(WindowRegistryKeys.VideoMute, false);
             VideoRepeat = registryKey.GetBoolean(WindowRegistryKeys.VideoRepeat, false);
             VideoSpeed = registryKey.GetInteger(WindowRegistryKeys.VideoSpeed, 2);
+            VideoFastForwardSpeed = registryKey.GetDouble(WindowRegistryKeys.VideoFastForwardSpeed, 16);
+            if (VideoFastForwardSpeed <= 0) VideoFastForwardSpeed = 16;
+            VideoRewindSpeed = registryKey.GetDouble(WindowRegistryKeys.VideoRewindSpeed, 16);
+            if (VideoRewindSpeed <= 0) VideoRewindSpeed = 16;
 
             string flagKeysJson = registryKey.GetString(WindowRegistryKeys.FlagShortcutKeys, string.Empty);
             if (!string.IsNullOrEmpty(flagKeysJson))
