@@ -1,0 +1,8 @@
+System.Exception: Loading FFmpeg libraries ':FFmpeg' failed
+   at FlyleafLib.FFmpegEngine..ctor()
+   at FlyleafLib.Engine.StartInternalNonUI()
+   at FlyleafLib.Engine.<>c__DisplayClass43_0.<StartInternal>b__0()
+   at FlyleafLib.Utils.UIInvokeIfRequired(Action action)
+   at FlyleafLib.Engine.StartInternal(EngineConfig config, Boolean async)
+   at FlyleafLib.Engine.Start(EngineConfig config)
+   at Timelapse.TimelapseWindow..ctor() in C:\apps\timelaps_ex\Timelapse\src\Timelapse\TimelapseWindow.xaml.cs:line 127

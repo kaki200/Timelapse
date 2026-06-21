@@ -28,14 +28,13 @@ namespace Timelapse.Controls
         /// <summary>
         ///  We do VideoPosition as a property so we can manipulate and/or check things whenever the video position is changed.
         /// </summary>
-        public FlyleafLib.Controls.WPF.FlyleafHost MediaElement => this.FlyleafHostActive; internal TimeSpan MediaElementCurrentPosition { get => TimeSpan.FromTicks(this.playerActive?.CurTime ?? 0); set { if (this.playerActive != null) this.playerActive.CurTime = value.Ticks; } }
+        public FlyleafLib.Controls.WPF.FlyleafHost MediaElement => this.CurrentHost; internal TimeSpan MediaElementCurrentPosition { get => TimeSpan.FromTicks(this.playerActive?.CurTime ?? 0); set { if (this.playerActive != null) this.playerActive.CurTime = value.Ticks; } }
 
         #endregion
 
         #region Private variables
         // Pointers to the video itself
         public FlyleafLib.MediaPlayer.Player playerActive;
-        public FlyleafLib.MediaPlayer.Player playerBackground;
         private long FileIndex; // A pointer to the ImageRow
         public Uri SourceUri; // The currently loaded video
 
@@ -69,14 +68,14 @@ namespace Timelapse.Controls
         public VideoPlayer()
         {
             InitializeComponent();
+            this.CurrentHost = this.FlyleafHostActive;
+            this.CurrentHost.Opacity = 1.0;
 
             // Set some parameters for the Media Element behavior
             // When the MediaState is Close, it releases all video-related resources, including video memory
 
             this.playerActive = new FlyleafLib.MediaPlayer.Player();
-            this.playerBackground = new FlyleafLib.MediaPlayer.Player();
             this.FlyleafHostActive.Player = this.playerActive;
-            this.FlyleafHostBackground.Player = this.playerBackground;
             this.playerActive.OpenCompleted += PlayerActive_OpenCompleted;
             this.playerActive.PlaybackStopped += MediaElementMediaEnded;
             
@@ -95,8 +94,14 @@ namespace Timelapse.Controls
             this.IsEnabled = false;
         }
 
+        private FlyleafLib.Controls.WPF.FlyleafHost CurrentHost;
+
         private void VideoPlayer_Loaded(object sender, RoutedEventArgs e)
         {
+            if (this.CurrentHost == null)
+            {
+                this.CurrentHost = this.FlyleafHostActive;
+            }
             if (false == GlobalReferences.MainWindow.IsFileDatabaseAvailable() || this.IsVideoPlayerLoaded)
             {
                 // - No need to load things until a file database is actually available.
@@ -183,12 +188,9 @@ namespace Timelapse.Controls
         /// Doing so invokes the MediaOpened callback, which actually initializes everything
         /// </summary>
         
-        private Uri preloadedUri = null;
         public void PreloadVideo(Uri source)
         {
-            if (source == null) return;
-            this.preloadedUri = source;
-            this.playerBackground.OpenAsync(source.AbsolutePath);
+            // Buffering disabled due to FlyleafHost instability and WPF airspace issues
         }
 
         private bool isSpeedChanged = false;
@@ -197,7 +199,7 @@ namespace Timelapse.Controls
 
         public void StartFastForward()
         {
-            if (this.playerActive == null) return;
+            if (this.playerActive == null || !this.playerActive.CanPlay) return;
             if (!isSpeedChanged)
             {
                 wasPaused = !this.playerActive.IsPlaying;
@@ -210,7 +212,7 @@ namespace Timelapse.Controls
 
         public void StartRewind()
         {
-            if (this.playerActive == null) return;
+            if (this.playerActive == null || !this.playerActive.CanPlay) return;
             if (!isSpeedChanged)
             {
                 wasPaused = !this.playerActive.IsPlaying;
@@ -293,37 +295,11 @@ namespace Timelapse.Controls
             // We redo this as sometimes it doesn't seem to 'catch' in the VideoPlayer_Loaded event
             this.DoScalingAndTransforms();
 
-            // Ping-Pong caching check
-            if (source != null && this.preloadedUri == source)
+            // Buffering disabled. Open directly.
+            this.SourceUri = source;
+            if (source != null)
             {
-                // Swap players
-                var tempPlayer = this.playerActive;
-                this.playerActive = this.playerBackground;
-                this.playerBackground = tempPlayer;
-
-                var tempHost = this.FlyleafHostActive.Player;
-                this.FlyleafHostActive.Player = this.FlyleafHostBackground.Player;
-                this.FlyleafHostBackground.Player = tempHost;
-
-                // Re-hook events
-                this.playerBackground.OpenCompleted -= PlayerActive_OpenCompleted;
-                this.playerBackground.PlaybackStopped -= MediaElementMediaEnded;
-                this.playerActive.OpenCompleted += PlayerActive_OpenCompleted;
-                this.playerActive.PlaybackStopped += MediaElementMediaEnded;
-
-                this.SourceUri = source;
-                this.preloadedUri = null;
-
-                // The video is already opened, so we can manually trigger the UI update
-                System.Windows.Application.Current.Dispatcher.InvokeAsync(() => Video_MediaOpened(this, null));
-            }
-            else
-            {
-                this.SourceUri = source;
-                if (source != null)
-                {
-                    this.playerActive.OpenAsync(source.AbsolutePath);
-                }
+                this.playerActive.OpenAsync(source.AbsolutePath);
             }
         }
         #endregion
@@ -710,7 +686,7 @@ namespace Timelapse.Controls
         {
             if (this.SourceUri != null)
             {
-                if (this.playerActive != null && this.isSpeedChanged && this.targetFFRWSpeed != 0)
+                if (this.playerActive != null && this.playerActive.CanPlay && this.isSpeedChanged && this.targetFFRWSpeed != 0)
                 {
                     long deltaTicks = (long)(TimeSpan.FromMilliseconds(33).Ticks * this.targetFFRWSpeed);
                     long newCurTime = this.playerActive.CurTime + deltaTicks;
@@ -744,15 +720,23 @@ namespace Timelapse.Controls
         #region Private Slider-related callbacks
         // The Slider's position has changed
         // But we only take action when the change is due to scrubbing actions by the user 
+        private DateTime lastSliderSeekTime = DateTime.MinValue;
+
         private void SliderScrubbing_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            if (false == this.IsVisible || isProgrammaticUpdate)
+            if (false == this.IsVisible || isProgrammaticUpdate || this.playerActive == null || !this.playerActive.CanPlay)
             {
                 return;
             }
 
             TimeSpan videoPosition = TimeSpan.FromSeconds(SliderScrubbing.Value);
-            this.MediaElementCurrentPosition = videoPosition;
+            
+            // Throttle rapid seeks from slider drag to prevent Flyleaf RenderPlay crashes (max ~30fps)
+            if ((DateTime.Now - lastSliderSeekTime).TotalMilliseconds > 33)
+            {
+                this.MediaElementCurrentPosition = videoPosition;
+                lastSliderSeekTime = DateTime.Now;
+            }
 
             // Update which frame we should be displaying
             if (this.FrameRate != null)
@@ -775,6 +759,12 @@ namespace Timelapse.Controls
 
         private void SliderScrubbing_PreviewMouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (this.playerActive == null || !this.playerActive.CanPlay) return;
+
+            // Ensure the exact final position is sought when the user releases the slider
+            TimeSpan videoPosition = TimeSpan.FromSeconds(SliderScrubbing.Value);
+            this.MediaElementCurrentPosition = videoPosition;
+
             if (this.wasPlayingBeforeScrubbing)
             {
                 this.Play();
@@ -819,10 +809,10 @@ namespace Timelapse.Controls
         // the other dimension based on the current width (or height) of the player.
         private Point GetActualVideoSize()
         {
-            double videoWidth = this.FlyleafHostActive.ActualWidth;
-            double videoHeight = this.FlyleafHostActive.ActualHeight;
-            double playerWidth = this.FlyleafHostActive.ActualWidth;
-            double playerHeight = this.FlyleafHostActive.ActualHeight;
+            double videoWidth = this.CurrentHost.ActualWidth;
+            double videoHeight = this.CurrentHost.ActualHeight;
+            double playerWidth = this.CurrentHost.ActualWidth;
+            double playerHeight = this.CurrentHost.ActualHeight;
             // Compare the aspect ratio of the video player to the video aspect ratio 
             // Depending on the results, we are either filling the video's width or its height.
             // We can then use the aspect ratio to determine the other dimension.
@@ -977,7 +967,7 @@ namespace Timelapse.Controls
             this.TransformGroup = new();
             this.TransformGroup.Children.Add(VideoScale);
             this.TransformGroup.Children.Add(VideoTranslation);
-            this.FlyleafHostActive.RenderTransform = TransformGroup;
+            this.CurrentHost.RenderTransform = TransformGroup;
         }
         #endregion
 
@@ -1116,14 +1106,14 @@ namespace Timelapse.Controls
             }
 
             // If we are zooming in around a point off the image, then correct the location to the edge of the image
-            if (currentMousePosition.X > this.FlyleafHostActive.ActualWidth)
+            if (currentMousePosition.X > this.CurrentHost.ActualWidth)
             {
-                currentMousePosition.X = this.FlyleafHostActive.ActualWidth;
+                currentMousePosition.X = this.CurrentHost.ActualWidth;
             }
 
-            if (currentMousePosition.Y > this.FlyleafHostActive.ActualHeight)
+            if (currentMousePosition.Y > this.CurrentHost.ActualHeight)
             {
-                currentMousePosition.Y = this.FlyleafHostActive.ActualHeight;
+                currentMousePosition.Y = this.CurrentHost.ActualHeight;
             }
 
             // We will scale around the current point (This may be a no-op, but am not sure.)
@@ -1167,13 +1157,13 @@ namespace Timelapse.Controls
 
             // Scale the video, and at the same time translate it so that the 
             // location in the video (which is the location of the cursor) stays there
-            lock (this.FlyleafHostActive)
+            lock (this.CurrentHost)
             {
-                double videoWidth = this.FlyleafHostActive.Width * VideoScale.ScaleX;
-                double videoHeight = this.FlyleafHostActive.Height * VideoScale.ScaleY;
+                double videoWidth = this.CurrentHost.Width * VideoScale.ScaleX;
+                double videoHeight = this.CurrentHost.Height * VideoScale.ScaleY;
 
                 Point center = PointFromScreen(MediaElement.PointToScreen(
-                    new(this.FlyleafHostActive.Width / 2.0, this.FlyleafHostActive.Height / 2.0)));
+                    new(this.CurrentHost.Width / 2.0, this.CurrentHost.Height / 2.0)));
 
                 double newX = center.X - (afterZoom.X - beforeZoom.X);
                 double newY = center.Y - (afterZoom.Y - beforeZoom.Y);
@@ -1182,18 +1172,18 @@ namespace Timelapse.Controls
                 {
                     newX = videoWidth / 2.0;
                 }
-                else if (newX + videoWidth / 2.0 <= this.FlyleafHostActive.ActualWidth)
+                else if (newX + videoWidth / 2.0 <= this.CurrentHost.ActualWidth)
                 {
-                    newX = this.FlyleafHostActive.ActualWidth - videoWidth / 2.0;
+                    newX = this.CurrentHost.ActualWidth - videoWidth / 2.0;
                 }
 
                 if (newY - videoHeight / 2.0 >= 0.0)
                 {
                     newY = videoHeight / 2.0;
                 }
-                else if (newY + videoHeight / 2.0 <= this.FlyleafHostActive.ActualHeight)
+                else if (newY + videoHeight / 2.0 <= this.CurrentHost.ActualHeight)
                 {
-                    newY = this.FlyleafHostActive.ActualHeight - videoHeight / 2.0;
+                    newY = this.CurrentHost.ActualHeight - videoHeight / 2.0;
                 }
 
                 VideoTranslation.X += newX - center.X;
@@ -1207,15 +1197,15 @@ namespace Timelapse.Controls
         public void TranslateVideo(Point currentMousePosition, Point previousMousePosition)
         {
             // Get the center point on the image
-            Point center = PointFromScreen(MediaElement.PointToScreen(new(this.FlyleafHostActive.Width / 2.0, this.FlyleafHostActive.Height / 2.0)));
+            Point center = PointFromScreen(MediaElement.PointToScreen(new(this.CurrentHost.Width / 2.0, this.CurrentHost.Height / 2.0)));
 
             // Calculate the delta position from the last location relative to the center
             double newX = center.X + currentMousePosition.X - previousMousePosition.X;
             double newY = center.Y + currentMousePosition.Y - previousMousePosition.Y;
 
             // get the translated image width
-            double imageWidth = this.FlyleafHostActive.Width * VideoScale.ScaleX;
-            double imageHeight = this.FlyleafHostActive.Height * VideoScale.ScaleY;
+            double imageWidth = this.CurrentHost.Width * VideoScale.ScaleX;
+            double imageHeight = this.CurrentHost.Height * VideoScale.ScaleY;
 
             // Limit the delta position so that the image stays on the screen
             if (newX - imageWidth / 2.0 >= 0.0)
@@ -1252,8 +1242,8 @@ namespace Timelapse.Controls
         private void VideoPlayer_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             // Minor inefficiency: SizeChanged is invoked twice when Timelapse is first started on a video
-            this.FlyleafHostActive.Width = VideoCanvas.ActualWidth;
-            this.FlyleafHostActive.Height = VideoCanvas.ActualHeight;
+            this.CurrentHost.Width = VideoCanvas.ActualWidth;
+            this.CurrentHost.Height = VideoCanvas.ActualHeight;
             VideoScale.CenterX = 0.5 * ActualWidth;
             VideoScale.CenterY = 0.5 * ActualHeight;
 
