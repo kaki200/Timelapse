@@ -3,6 +3,7 @@ using Microsoft.WindowsAPICodePack.Shell;
 using System;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Timelapse.Constant;
@@ -61,6 +62,11 @@ namespace Timelapse.Controls
         private readonly ScaleTransform VideoScale;
         private readonly TranslateTransform VideoTranslation;
         private TransformGroup TransformGroup;
+
+        // WndProc subclassing state
+        private IntPtr _originalSurfaceWndProc;
+        private WndProcDelegate _surfaceWndProcDelegate;
+        private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         #endregion
 
         #region Constructor, Loading, Unloading
@@ -71,15 +77,17 @@ namespace Timelapse.Controls
             this.CurrentHost = this.FlyleafHostActive;
             this.CurrentHost.Opacity = 1.0;
 
-            // Set some parameters for the Media Element behavior
-            // When the MediaState is Close, it releases all video-related resources, including video memory
+            // Enable Flyleaf's native bindings (Ctrl+Wheel zoom, Ctrl+Drag pan)
+            this.FlyleafHostActive.PanZoomOnCtrlWheel = FlyleafLib.Controls.WPF.AvailableWindows.Both;
+            this.FlyleafHostActive.PanMoveOnCtrl = FlyleafLib.Controls.WPF.AvailableWindows.Both;
+            this.FlyleafHostActive.MouseBindings = FlyleafLib.Controls.WPF.AvailableWindows.Both;
+            // Disable Flyleaf key bindings so arrow keys are never swallowed for seeking
+            this.FlyleafHostActive.KeyBindings = FlyleafLib.Controls.WPF.AvailableWindows.None;
 
             this.playerActive = new FlyleafLib.MediaPlayer.Player();
             this.FlyleafHostActive.Player = this.playerActive;
             this.playerActive.OpenCompleted += PlayerActive_OpenCompleted;
             this.playerActive.PlaybackStopped += MediaElementMediaEnded;
-            
-
 
             this.isProgrammaticUpdate = false;
 
@@ -92,7 +100,72 @@ namespace Timelapse.Controls
 
             // Start with the video controls disabled
             this.IsEnabled = false;
+
+            // Input focus stealing prevention is handled by TrySubclassFlyleafSurface
         }
+
+        #region Win32 WndProc Subclassing to Prevent Focus Stealing
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+        private static extern IntPtr SetWindowLong32(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        private static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            return IntPtr.Size == 8
+                ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong)
+                : SetWindowLong32(hWnd, nIndex, dwNewLong);
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        private const int GWLP_WNDPROC = -4;
+
+        private void TrySubclassFlyleafSurface()
+        {
+            var surfaceHandle = this.FlyleafHostActive?.SurfaceHandle ?? IntPtr.Zero;
+            if (surfaceHandle != IntPtr.Zero && _originalSurfaceWndProc == IntPtr.Zero)
+            {
+                _surfaceWndProcDelegate = new WndProcDelegate(FlyleafWndProc);
+                var newWndProc = System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(_surfaceWndProcDelegate);
+                _originalSurfaceWndProc = SetWindowLongPtr(surfaceHandle, GWLP_WNDPROC, newWndProc);
+            }
+        }
+
+        private IntPtr FlyleafWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            const uint WM_SETFOCUS = 0x0007;
+
+            // Let Flyleaf process the message normally
+            IntPtr result = IntPtr.Zero;
+            if (_originalSurfaceWndProc != IntPtr.Zero)
+            {
+                result = CallWindowProc(_originalSurfaceWndProc, hWnd, msg, wParam, lParam);
+            }
+
+            // If Flyleaf just took focus, instantly steal it back to the WPF main window!
+            // This guarantees Flyleaf NEVER keeps keyboard focus, so WPF inputs (arrows, list selection) always work natively.
+            if (msg == WM_SETFOCUS)
+            {
+                var mainWindow = System.Windows.Application.Current.MainWindow as TimelapseWindow;
+                if (mainWindow != null)
+                {
+                    var source = PresentationSource.FromVisual(mainWindow) as System.Windows.Interop.HwndSource;
+                    if (source != null)
+                    {
+                        SetFocus(source.Handle);
+                    }
+                }
+            }
+
+            return result;
+        }
+        #endregion
 
         private FlyleafLib.Controls.WPF.FlyleafHost CurrentHost;
 
@@ -295,6 +368,14 @@ namespace Timelapse.Controls
             // We redo this as sometimes it doesn't seem to 'catch' in the VideoPlayer_Loaded event
             this.DoScalingAndTransforms();
 
+            // Reset Flyleaf zoom/pan state before loading the new video
+            if (this.playerActive.Config?.Video != null)
+            {
+                this.playerActive.Config.Video.Zoom = 100;
+                this.playerActive.Config.Video.PanXOffset = 0;
+                this.playerActive.Config.Video.PanYOffset = 0;
+            }
+
             // Buffering disabled. Open directly.
             this.SourceUri = source;
             if (source != null)
@@ -322,8 +403,11 @@ namespace Timelapse.Controls
 
             this.IsEnabled = true;
 
+            this.TrySubclassFlyleafSurface();
+
             // Determine and set the FrameRate, FrameToShow, VideoDuraton and Slider Scrubbing Duration values
             this.DoSetFrameRateAndFrameToShowValues();
+
             this.DoSetDurationValues();
             this.DoSetSliderAttributesForDuration();
 

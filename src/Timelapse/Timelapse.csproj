@@ -279,7 +279,7 @@
       <WrapperExes Include="$(OutputPath)TimelapseTemplateEditor.exe" />
       <WrapperExes Include="$(OutputPath)Timelapse-ViewOnly.exe" />
     </ItemGroup>
-    <Copy SourceFiles="@(WrapperExes)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WrapperExes)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="Exists('%(Identity)')" />
     <Message Text="Copied wrapper executables to publish directory" Importance="high" />
   </Target>
   <ItemGroup>
