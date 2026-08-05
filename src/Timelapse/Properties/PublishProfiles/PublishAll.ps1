@@ -6,7 +6,8 @@ param(
     [string]$InstallersDir = "$PSScriptRoot\..\..\..\..\Installers",
     [string]$SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe',
     [string]$Thumbprint = 'B6FF9831D50B47E1500DD47A0612E01E371CABC4',
-    [string]$TimestampUrl = 'http://timestamp.certum.pl'
+    [string]$TimestampUrl = 'http://timestamp.certum.pl',
+    [switch]$SkipSigning
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -37,6 +38,20 @@ function Sign-File([string]$FilePath) {
 }
 
 try {
+    # dotnet publish does not remove files left by an older publish. Start from clean,
+    # known output folders so deleted dependencies and diagnostic logs cannot leak into
+    # a new installer or zip package.
+    $publishDirectories = @(
+        "$projectDir\bin\Publish\RequiresDotNet10-win-x64",
+        "$projectDir\bin\Publish\SelfContained-win-x64"
+    )
+    foreach ($publishDirectory in $publishDirectories) {
+        if (Test-Path -LiteralPath $publishDirectory) {
+            Write-Host "Cleaning previous publish output: $publishDirectory" -ForegroundColor Gray
+            Remove-Item -LiteralPath $publishDirectory -Recurse -Force
+        }
+    }
+
     # Step 1: Publish RequiresDotNet10-win-x64
     Write-Host "[1/5] Publishing RequiresDotNet10-win-x64..." -ForegroundColor Yellow
     & dotnet publish $ProjectPath -p:PublishProfile=RequiresDotNet10-win-x64 -p:Configuration=Release
@@ -48,8 +63,12 @@ try {
 
     # Step 1b: Sign first-party binaries in RequiresDotNet10 publish folder
     Write-Host "[1b/5] Signing RequiresDotNet10 binaries (authorize on phone when prompted)..." -ForegroundColor Yellow
-    Sign-Binaries "$projectDir\bin\Publish\RequiresDotNet10-win-x64"
-    Write-Host "[DONE] RequiresDotNet10 binaries signed" -ForegroundColor Green
+    if (-not $SkipSigning) {
+        Sign-Binaries "$projectDir\bin\Publish\RequiresDotNet10-win-x64"
+        Write-Host "[DONE] RequiresDotNet10 binaries signed" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIPPED] Signing bypassed" -ForegroundColor Gray
+    }
     Write-Host ""
 
     # Step 2: Publish SelfContained-win-x64
@@ -63,8 +82,12 @@ try {
 
     # Step 2b: Sign first-party binaries in SelfContained publish folder
     Write-Host "[2b/5] Signing SelfContained binaries (authorize on phone when prompted)..." -ForegroundColor Yellow
-    Sign-Binaries "$projectDir\bin\Publish\SelfContained-win-x64"
-    Write-Host "[DONE] SelfContained binaries signed" -ForegroundColor Green
+    if (-not $SkipSigning) {
+        Sign-Binaries "$projectDir\bin\Publish\SelfContained-win-x64"
+        Write-Host "[DONE] SelfContained binaries signed" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIPPED] Signing bypassed" -ForegroundColor Gray
+    }
     Write-Host ""
 
     # Step 3: Build Timelapse Zip File (zips already-signed binaries - no signing needed)
@@ -103,8 +126,12 @@ try {
 
     # Step 4b: Sign PerMachine MSI
     Write-Host "[4b/5] Signing PerMachine MSI (authorize on phone when prompted)..." -ForegroundColor Yellow
-    Sign-File "$InstallersDir\bin\Release\TimelapseInstaller-PerMachine.msi"
-    Write-Host "[DONE] PerMachine MSI signed" -ForegroundColor Green
+    if (-not $SkipSigning) {
+        Sign-File "$InstallersDir\bin\Release\TimelapseInstaller-PerMachine.msi"
+        Write-Host "[DONE] PerMachine MSI signed" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIPPED] Signing bypassed" -ForegroundColor Gray
+    }
     Write-Host ""
 
     # Step 5: Build PerUser Installer
@@ -126,21 +153,29 @@ try {
 
     # Step 5b: Sign PerUser MSI
     Write-Host "[5b/5] Signing PerUser MSI (authorize on phone when prompted)..." -ForegroundColor Yellow
-    Sign-File "$InstallersDir\bin\Release\TimelapseInstaller-PerUser.msi"
-    Write-Host "[DONE] PerUser MSI signed" -ForegroundColor Green
+    if (-not $SkipSigning) {
+        Sign-File "$InstallersDir\bin\Release\TimelapseInstaller-PerUser.msi"
+        Write-Host "[DONE] PerUser MSI signed" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIPPED] Signing bypassed" -ForegroundColor Gray
+    }
     Write-Host ""
 
     # Step 6: Verify all signatures
     Write-Host "[6/5] Verifying all signatures..." -ForegroundColor Yellow
-    & "$PSScriptRoot\VerifySignatures.ps1" `
-        -RequiresDotNet10Dir "$projectDir\bin\Publish\RequiresDotNet10-win-x64" `
-        -SelfContainedDir    "$projectDir\bin\Publish\SelfContained-win-x64" `
-        -InstallersOutputDir "$InstallersDir\bin\Release" `
-        -SignTool $SignTool
-    if ($LASTEXITCODE -ne 0) {
-        throw "Signature verification failed - one or more files did not verify"
+    if (-not $SkipSigning) {
+        & "$PSScriptRoot\VerifySignatures.ps1" `
+            -RequiresDotNet10Dir "$projectDir\bin\Publish\RequiresDotNet10-win-x64" `
+            -SelfContainedDir    "$projectDir\bin\Publish\SelfContained-win-x64" `
+            -InstallersOutputDir "$InstallersDir\bin\Release" `
+            -SignTool $SignTool
+        if ($LASTEXITCODE -ne 0) {
+            throw "Signature verification failed - one or more files did not verify"
+        }
+        Write-Host "[DONE] All signatures verified" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIPPED] Signature verification bypassed" -ForegroundColor Gray
     }
-    Write-Host "[DONE] All signatures verified" -ForegroundColor Green
     Write-Host ""
 
     # Step 7: Generate SHA-256 checksums for distributable artifacts
@@ -228,7 +263,11 @@ try {
     Write-Host "  - PerMachine MSI:   $InstallersDir\bin\Release\TimelapseInstaller-PerMachine.msi" -ForegroundColor White
     Write-Host "  - PerUser MSI:      $InstallersDir\bin\Release\TimelapseInstaller-PerUser.msi" -ForegroundColor White
     Write-Host ""
-    Write-Host "All first-party binaries and MSI installers are signed." -ForegroundColor Cyan
+    if ($SkipSigning) {
+        Write-Host "Signing was skipped; generated artifacts are unsigned." -ForegroundColor Yellow
+    } else {
+        Write-Host "All first-party binaries and MSI installers are signed." -ForegroundColor Cyan
+    }
     Write-Host ""
 
     exit 0

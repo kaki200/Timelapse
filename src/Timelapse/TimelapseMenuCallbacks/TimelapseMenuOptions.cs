@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using Timelapse.DataStructures;
 using Timelapse.Dialog;
 using Timelapse.Enums;
@@ -73,7 +73,7 @@ namespace Timelapse
         }
         #endregion
 
-        #region Adjust VideoPlayer playback speeds
+        #region Adjust VideoPlayer seek speeds
         private void MenuItemVideoPlayerOptions_Click(object sender, RoutedEventArgs e)
         {
             VideoPlayerOptions videoPlayerOptions = new(State, this);

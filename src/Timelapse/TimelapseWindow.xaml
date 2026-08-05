@@ -1,4 +1,4 @@
-<Window x:Class="Timelapse.TimelapseWindow"
+﻿<Window x:Class="Timelapse.TimelapseWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:controls="clr-namespace:Timelapse.Controls"
     xmlns:images="clr-namespace:Timelapse.Images"
@@ -320,7 +320,7 @@
 
                     <MenuItem Name="MenuItemImageAdjuster" Header="_Adjust image appearance&#x2026;" Click="MenuItemImageAdjuster_Click" IsEnabled="False" ToolTip="Temporarily adjust the brightness, contrast, gamma, sharpness or edging of the displayed image"/>
                     <MenuItem Name="MenuItemFilePlayerOptions" Header="_Adjust FilePlayer playback speeds&#x2026;" Click="MenuItemFilePlayerOptions_Click" IsEnabled="True" ToolTip="File Player options to adjust the image display speed"/>
-                    <MenuItem Name="MenuItemVideoPlayerOptions" Header="_Adjust VideoPlayer playback speeds&#x2026;" Click="MenuItemVideoPlayerOptions_Click" IsEnabled="True" ToolTip="Video Player options to adjust fast-forward and rewind speed"/>
+                    <MenuItem Name="MenuItemVideoPlayerOptions" Header="_Adjust VideoPlayer seek speeds&#x2026;" Click="MenuItemVideoPlayerOptions_Click" IsEnabled="True" ToolTip="Adjust the Up-key fast-forward and Down-key rewind speeds"/>
                     <MenuItem Name="MenuItemEpisodeOptions" 
                               Header="_Adjust episode time threshold&#x2026;" 
                               Click="MenuItemEpisodeOptions_Click" 

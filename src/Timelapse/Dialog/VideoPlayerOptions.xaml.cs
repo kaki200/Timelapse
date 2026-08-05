@@ -3,41 +3,45 @@ using Timelapse.State;
 
 namespace Timelapse.Dialog
 {
-    public partial class VideoPlayerOptions : Window
+    public partial class VideoPlayerOptions
     {
         private readonly TimelapseState state;
 
         public VideoPlayerOptions(TimelapseState state, Window owner)
         {
             InitializeComponent();
-            Owner = owner;
             this.state = state;
+            this.Owner = owner;
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            Timelapse.Util.FormattedDialogHelper.SetupStaticReferenceResolver(Message);
-            this.Message.BuildContentFromProperties();
-            Dialogs.TryPositionAndFitDialogIntoWindow(this);
-
-            FastForwardSlider.Value = state.VideoFastForwardSpeed;
-            RewindSlider.Value = state.VideoRewindSpeed;
-
-            FastForwardSlider.ValueChanged += (s, ev) => { state.VideoFastForwardSpeed = FastForwardSlider.Value; UpdateText(); };
-            RewindSlider.ValueChanged += (s, ev) => { state.VideoRewindSpeed = RewindSlider.Value; UpdateText(); };
-
-            UpdateText();
+            this.FastForwardSlider.Value = this.state.VideoFastForwardSpeed;
+            this.RewindSlider.Value = this.state.VideoRewindSpeed;
+            this.UpdateSpeedText();
         }
 
-        private void UpdateText()
+        private void SpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            FastForwardText.Text = $"{state.VideoFastForwardSpeed:F1}x";
-            RewindText.Text = $"{state.VideoRewindSpeed:F1}x";
+            this.UpdateSpeedText();
+        }
+
+        private void UpdateSpeedText()
+        {
+            if (this.FastForwardText == null || this.RewindText == null)
+            {
+                return;
+            }
+
+            this.FastForwardText.Text = $"{this.FastForwardSlider.Value:F0}x";
+            this.RewindText.Text = $"{this.RewindSlider.Value:F0}x";
         }
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = true;
+            this.state.VideoFastForwardSpeed = this.FastForwardSlider.Value;
+            this.state.VideoRewindSpeed = this.RewindSlider.Value;
+            this.DialogResult = true;
         }
     }
 }

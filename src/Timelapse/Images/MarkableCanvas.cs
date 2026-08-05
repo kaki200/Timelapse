@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -241,7 +241,13 @@ namespace Timelapse.Images
                 VerticalAlignment = VerticalAlignment.Top
             };
             VideoPlayer.SizeChanged += VideoToDisplay_SizeChanged;
-            VideoPlayer.MouseWheel += ImageOrCanvas_MouseWheel;
+            VideoPlayer.VideoMouseWheel += ImageOrCanvas_MouseWheel;
+            VideoPlayer.VideoPreviewMouseLeftButtonDown += MarkableCanvas_PreviewMouseLeftButtonDown;
+            VideoPlayer.VideoMouseLeftButtonDown += ImageVideoOrCanvas_MouseDown;
+            VideoPlayer.VideoMouseLeftButtonUp += ImageVideoOrCanvas_MouseUp;
+            VideoPlayer.VideoMouseMove += MarkableCanvas_MouseMove;
+            VideoPlayer.VideoMouseLeave += MediaElementMouseLeave;
+            VideoPlayer.VideoPanStarted += VideoPlayer_VideoPanStarted;
             VideoPlayer.MouseDown += ImageVideoOrCanvas_MouseDown;
             VideoPlayer.MouseLeftButtonUp += ImageVideoOrCanvas_MouseUp;
             SetLeft(VideoPlayer, 0);
@@ -289,7 +295,7 @@ namespace Timelapse.Images
             // FIX: Tunnels before any child (including Slider.Thumb which marks bubble MouseDown as handled),
             // guaranteeing we can reset pan state on every new press regardless of which child the cursor is over.
             PreviewMouseLeftButtonDown += MarkableCanvas_PreviewMouseLeftButtonDown;
-            VideoPlayer.MediaElement.MouseLeave += MediaElementMouseLeave;
+            VideoPlayer.MouseLeave += MediaElementMouseLeave;
             PreviewKeyDown += MarkableCanvas_PreviewKeyDown;
             PreviewKeyUp += MarkableCanvas_PreviewKeyUp;
             Loaded += MarkableCanvas_Loaded;
@@ -315,6 +321,13 @@ namespace Timelapse.Images
             SetMagnifiersAccordingToCurrentState(false, false);
         }
 
+        private void VideoPlayer_VideoPanStarted(object sender, EventArgs e)
+        {
+            isPanning = true;
+            Cursor = Cursors.ScrollAll;
+            SetMagnifiersAccordingToCurrentState(false, false);
+        }
+
         // Set the various magnifier / offset lens states.
         // Hide the magnifiers initially, as the mouse pointer may not be atop the canvas
         private void MarkableCanvas_Loaded(object sender, RoutedEventArgs e)
@@ -324,7 +337,7 @@ namespace Timelapse.Images
                 // Prevents a Xaml design mode error 
                 return;
             }
-            MagnifierManager.SetMagnifier(VideoPlayer.MediaElement, OffsetLens);
+            MagnifierManager.SetMagnifier(VideoPlayer.VideoSurface, OffsetLens);
             magnifyingGlass.ZoomFactor = GlobalReferences.TimelapseState.MagnifyingGlassZoomFactor;
             magnifyingGlassZoomStep = Constant.MarkableCanvas.MagnifyingGlassZoomIncrement;
             OffsetLens.ZoomFactor = GlobalReferences.TimelapseState.OffsetLensZoomFactor;
@@ -836,16 +849,16 @@ namespace Timelapse.Images
 
         private bool IsMouseOverVideo()
         {
-            Point mousePosition = Mouse.GetPosition(VideoPlayer.MediaElement);
-            return mousePosition.X >= 0 && mousePosition.X <= VideoPlayer.MediaElement.ActualWidth &&
-                   mousePosition.Y >= 0 && mousePosition.Y <= VideoPlayer.MediaElement.ActualHeight;
+            Point mousePosition = Mouse.GetPosition(VideoPlayer.VideoCanvas);
+            return mousePosition.X >= 0 && mousePosition.X <= VideoPlayer.VideoCanvas.ActualWidth &&
+                   mousePosition.Y >= 0 && mousePosition.Y <= VideoPlayer.VideoCanvas.ActualHeight;
         }
 
         // Flip the OffsetLens to whichever quadrant keeps it on-screen.
         private void UpdateOffsetLensDirection(Point mousePosition)
         {
-            double width = VideoPlayer.MediaElement.ActualWidth;
-            double height = VideoPlayer.MediaElement.ActualHeight;
+            double width = VideoPlayer.VideoCanvas.ActualWidth;
+            double height = VideoPlayer.VideoCanvas.ActualHeight;
             const double EdgeThreshold = Constant.MarkableCanvas.MagnifyingGlassDiameter;
 
             bool nearLeft = mousePosition.X < EdgeThreshold;
@@ -1087,7 +1100,9 @@ namespace Timelapse.Images
         // panning/zooming vs. marking.
         private void ImageVideoOrCanvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            previousMousePosition = e.GetPosition(this);
+            previousMousePosition = displayingImage
+                ? e.GetPosition(this)
+                : e.GetPosition(VideoPlayer.VideoCanvas);
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 // FIX: When displaying video, MouseDown bubbles up from all VideoPlayer children
@@ -1109,7 +1124,7 @@ namespace Timelapse.Images
 
                 mouseDownLocation = (displayingImage)
                     ? e.GetPosition(ImageToDisplay)
-                    : e.GetPosition(VideoPlayer.MediaElement);
+                    : e.GetPosition(VideoPlayer.VideoCanvas);
                 mouseDownSender = (UIElement)sender;
                 mouseDownLocation = transformGroup.Transform(mouseDownLocation); // In case we are panning
                 // If its more than the given time interval since the last click, then we are on the 2nd click of a double click
@@ -1145,7 +1160,7 @@ namespace Timelapse.Images
         {
             Point mousePosition = (displayingImage)
                     ? e.GetPosition(ImageToDisplay)
-                    : e.GetPosition(VideoPlayer.MediaElement);
+                    : e.GetPosition(VideoPlayer.VideoCanvas);
 
             // If we are not yet in panning mode, switch into it if the user has moved at least the threshold distance from mouse down position.
             // FIX: Also guard on mouseDownSender != null so that a press that originated on a video control
@@ -1154,6 +1169,7 @@ namespace Timelapse.Images
                 (mouseDownLocation - mousePosition).Length > Constant.MarkableCanvas.MarkingVsPanningDistanceThreshold)
             {
                 isPanning = true;
+                SetMagnifiersAccordingToCurrentState(false, false);
             }
 
             // The magnifying glass is visible only if the current mouse position is over the image. 
@@ -1166,7 +1182,7 @@ namespace Timelapse.Images
             else if (OffsetLens.IsEnabled && displayingImage == false)
             {
                 SetMagnifiersAccordingToCurrentState(false, true);
-                UpdateOffsetLensDirection(e.GetPosition(VideoPlayer.MediaElement));
+                UpdateOffsetLensDirection(e.GetPosition(VideoPlayer.VideoCanvas));
             }
 
             if (isPanning)
@@ -1175,8 +1191,6 @@ namespace Timelapse.Images
                 // We hide the magnifying glass during panning so it won't be distracting.
                 if (e.LeftButton == MouseButtonState.Pressed)
                 {
-                    // Don't show magnifiers when panning
-                    SetMagnifiersAccordingToCurrentState(false, false);
                     if (displayingImage)
                     {
                         // Translation is possible only if the image isn't already scaled
@@ -1194,6 +1208,10 @@ namespace Timelapse.Images
                         {
                             Cursor = Cursors.ScrollAll;    // Change the cursor to a panning cursor
                             VideoPlayer.TranslateVideo(mousePosition, previousMousePosition);
+                            // Video panning does not affect image magnifiers. Avoid their layout
+                            // and redraw work for every high-frequency mouse move.
+                            previousMousePosition = mousePosition;
+                            return;
                         }
                     }
                 }
@@ -1308,7 +1326,7 @@ namespace Timelapse.Images
 
             // Zoom in or out
             Point imageMousePosition = e.GetPosition(ImageToDisplay);
-            Point videoMousePosition = e.GetPosition(VideoPlayer.MediaElement);
+            Point videoMousePosition = e.GetPosition(VideoPlayer.VideoCanvas);
             TryZoomInOrOut(zoomIn, imageMousePosition, videoMousePosition);
             e.Handled = true; // As otherwise it may be invoked twice by both the marker and markable canvase
         }
@@ -1402,14 +1420,14 @@ namespace Timelapse.Images
                 case Key.OemPeriod:  // Key.>
                     // zoom in
                     Point imageMousePosition = Mouse.GetPosition(ImageToDisplay);
-                    Point videoMousePosition = Mouse.GetPosition(VideoPlayer.MediaElement);
+                    Point videoMousePosition = Mouse.GetPosition(VideoPlayer.VideoCanvas);
                     TryZoomInOrOut(true, imageMousePosition, videoMousePosition);
                     break;
                 // zoom out // Key,>
                 case Key.OemComma:
                     // zoom out
                     Point imageMousePosition2 = Mouse.GetPosition(ImageToDisplay);
-                    Point videoMousePosition2 = Mouse.GetPosition(VideoPlayer.MediaElement);
+                    Point videoMousePosition2 = Mouse.GetPosition(VideoPlayer.VideoCanvas);
                     TryZoomInOrOut(false, imageMousePosition2, videoMousePosition2);
                     break;
                 // if the current file's a video allow the user to hit the space bar to start or stop playing the video
@@ -1423,7 +1441,7 @@ namespace Timelapse.Images
                     break;
                 case Key.R:
                     // Try going to the best frame, if there is one
-                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
+                    if (VideoPlayer.IsVisible && VideoPlayer.HasSource)
                     {
                         VideoPlayer.TryGoToBestFrame();
                     }
@@ -1431,27 +1449,11 @@ namespace Timelapse.Images
                 //case Key.F5:
                 // TODO: This may no longer be needed
                 //    // Refresh the video, if one is showing
-                //    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
+                //    if (VideoPlayer.IsVisible && VideoPlayer.HasSource)
                 //    {
                 //        VideoPlayer.TryRefreshSource();
                 //    }
                 //    break;
-                case Key.Up:
-                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
-                    {
-                        System.IO.File.AppendAllText("speed_debug.txt", "MarkableCanvas Key.Up received!\n");
-                        VideoPlayer.StartFastForward();
-                        e.Handled = true;
-                    }
-                    break;
-                case Key.Down:
-                    if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
-                    {
-                        System.IO.File.AppendAllText("speed_debug.txt", "MarkableCanvas Key.Down received!\n");
-                        VideoPlayer.StartRewind();
-                        e.Handled = true;
-                    }
-                    break;
                 case Key.H:
                     // Will hide detection boxes, if any
                     if (!e.IsRepeat)
@@ -1483,15 +1485,6 @@ namespace Timelapse.Images
         // If its an H, RedrawBoundingBoxes will show the detection boxes
         private void MarkableCanvas_PreviewKeyUp(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Up || e.Key == Key.Down)
-            {
-                if (VideoPlayer.IsVisible && null != VideoPlayer.SourceUri)
-                {
-                    VideoPlayer.StopSpeedChange();
-                    e.Handled = true;
-                }
-            }
-
             switch (e.Key)
             {
                 case Key.H:

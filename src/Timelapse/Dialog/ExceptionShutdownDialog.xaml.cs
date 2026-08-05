@@ -26,11 +26,11 @@ namespace Timelapse.Dialog
             // Check the arguments for null
             ThrowIf.IsNullArgument(unhandledExceptionArgs, nameof(unhandledExceptionArgs));
 
-            Owner = owner;
             UnhandledExceptionArgs = unhandledExceptionArgs;
             IsSqlLiteError = null != sqlOperatonResult;
             SqlOperatonResult = sqlOperatonResult;
             InitializeComponent();
+            SetOwnerIfAvailable(owner);
         }
 
         // Overload for use when only an Exception is available (e.g. from DispatcherUnhandledException,
@@ -39,13 +39,24 @@ namespace Timelapse.Dialog
         {
             ThrowIf.IsNullArgument(exception, nameof(exception));
 
-            Owner = owner;
             // Wrap the Exception in an UnhandledExceptionEventArgs so the rest of the dialog can use it uniformly.
             UnhandledExceptionArgs = new UnhandledExceptionEventArgs(exception, false);
             IsSqlLiteError = null != sqlOperatonResult;
             SqlOperatonResult = sqlOperatonResult;
             InitializeComponent();
+            SetOwnerIfAvailable(owner);
         }
+
+        private void SetOwnerIfAvailable(Window owner)
+        {
+            // During StartupUri construction the main window has not been shown yet. WPF rejects
+            // such a window as an Owner, which would otherwise hide the original startup exception.
+            if (owner?.IsLoaded == true)
+            {
+                Owner = owner;
+            }
+        }
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             string emailText = "[ni] Email the bug report (optional) by either selecting:"

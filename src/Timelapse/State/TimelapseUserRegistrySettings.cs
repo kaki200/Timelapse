@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Windows;
 using Microsoft.Win32;
+using Newtonsoft.Json;
 using Timelapse.Constant;
 using Timelapse.DataStructures;
 using Timelapse.Enums;
@@ -147,19 +148,16 @@ namespace Timelapse.State
             VideoMute = registryKey.GetBoolean(WindowRegistryKeys.VideoMute, false);
             VideoRepeat = registryKey.GetBoolean(WindowRegistryKeys.VideoRepeat, false);
             VideoSpeed = registryKey.GetInteger(WindowRegistryKeys.VideoSpeed, 2);
-            VideoFastForwardSpeed = registryKey.GetDouble(WindowRegistryKeys.VideoFastForwardSpeed, 16);
-            if (VideoFastForwardSpeed <= 0) VideoFastForwardSpeed = 16;
-            VideoRewindSpeed = registryKey.GetDouble(WindowRegistryKeys.VideoRewindSpeed, 16);
-            if (VideoRewindSpeed <= 0) VideoRewindSpeed = 16;
-
+            VideoFastForwardSpeed = Math.Clamp(registryKey.GetDouble(WindowRegistryKeys.VideoFastForwardSpeed, 16), 1, 64);
+            VideoRewindSpeed = Math.Clamp(registryKey.GetDouble(WindowRegistryKeys.VideoRewindSpeed, 16), 1, 64);
             string flagKeysJson = registryKey.GetString(WindowRegistryKeys.FlagShortcutKeys, string.Empty);
             if (!string.IsNullOrEmpty(flagKeysJson))
             {
                 try
                 {
-                    FlagShortcutKeys = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, string>>(flagKeysJson) ?? new();
+                    FlagShortcutKeys = JsonConvert.DeserializeObject<Dictionary<string, string>>(flagKeysJson) ?? new();
                 }
-                catch
+                catch (JsonException)
                 {
                     FlagShortcutKeys = new();
                 }
@@ -269,13 +267,7 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.VideoSpeed, VideoSpeed);
             registryKey.Write(WindowRegistryKeys.VideoFastForwardSpeed, VideoFastForwardSpeed);
             registryKey.Write(WindowRegistryKeys.VideoRewindSpeed, VideoRewindSpeed);
-
-            try
-            {
-                string flagKeysJson = Newtonsoft.Json.JsonConvert.SerializeObject(FlagShortcutKeys);
-                registryKey.Write(WindowRegistryKeys.FlagShortcutKeys, flagKeysJson);
-            }
-            catch { }
+            registryKey.Write(WindowRegistryKeys.FlagShortcutKeys, JsonConvert.SerializeObject(FlagShortcutKeys));
         }
 
         /// <summary>

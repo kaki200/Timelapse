@@ -11,8 +11,20 @@ if "%~1"=="" (
 REM Set output directory to main Timelapse build folder
 set OUTPUT_DIR=..\Timelapse\bin\%CONFIG%\net10.0-windows\win-x64
 
-REM Initialize Visual Studio environment
-call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat"
+REM Locate a Visual Studio edition containing the C++ toolchain, then initialize it
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+    echo Visual Studio Installer's vswhere.exe was not found
+    exit /b 1
+)
+set "VS_INSTALL_PATH="
+for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_INSTALL_PATH=%%i"
+if not defined VS_INSTALL_PATH (
+    echo Visual Studio C++ build tools were not found
+    exit /b 1
+)
+call "%VS_INSTALL_PATH%\Common7\Tools\VsDevCmd.bat"
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
 
 REM Compile resource file
 echo Compiling resource file...

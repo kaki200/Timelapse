@@ -1,5 +1,4 @@
-using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows.Controls;
@@ -213,16 +212,6 @@ namespace Timelapse
                         MarkableCanvas.BoundingBoxes = bboxes;
                     }
                     EnableImageManipulationMenus(false);
-
-                    // Preload next video if it exists and is a video
-                    if (fileIndex + 1 < DataHandler.FileDatabase.CountAllCurrentlySelectedFiles)
-                    {
-                        ImageRow nextRow = DataHandler.FileDatabase.FileTable[fileIndex + 1];
-                        if (nextRow.IsVideo)
-                        {
-                            MarkableCanvas.VideoPlayer.PreloadVideo(new Uri(nextRow.GetFileInfo(DataHandler.FileDatabase.RootPathToImages).FullName));
-                        }
-                    }
                 }
                 else
                 {

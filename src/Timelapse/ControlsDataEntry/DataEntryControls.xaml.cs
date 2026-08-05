@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -249,7 +249,7 @@ namespace Timelapse.ControlsDataEntry
             ThrowIf.IsNullArgument(dataEntryPropagator, nameof(dataEntryPropagator));
             dataEntryPropagator.SetDataEntryCallbacks(ControlsByDataLabelThatAreVisible);
             dataEntryHandler = dataEntryPropagator;
-            
+
             UpdateShortcutLabels();
         }
         #endregion
@@ -258,7 +258,7 @@ namespace Timelapse.ControlsDataEntry
         {
             if (dataEntryHandler?.FileDatabase?.Controls == null) return;
             var flagShortcuts = GlobalReferences.TimelapseState?.FlagShortcutKeys;
-            
+
             foreach (var control in Controls)
             {
                 if (control is DataEntryFlag flagControl)

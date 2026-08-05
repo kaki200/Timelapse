@@ -27,6 +27,14 @@ namespace Timelapse.Util
             }
             return relativeTo.PointFromScreen(new(w32Mouse.X, w32Mouse.Y));
         }
+
+        /// <summary>Get the cursor position in Win32 screen pixels.</summary>
+        public static Point GetCursorScreenPosition()
+        {
+            Win32Point w32Mouse = new();
+            GetCursorPos(ref w32Mouse);
+            return new(w32Mouse.X, w32Mouse.Y);
+        }
         #endregion
 
         #region Private aspects

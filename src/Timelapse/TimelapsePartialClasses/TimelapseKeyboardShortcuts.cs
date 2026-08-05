@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Forms;
@@ -52,13 +52,9 @@ namespace Timelapse
         // Thus we have to implement our own version of it
         private void Window_PreviewKeyUp(object sender, KeyEventArgs currentKey)
         {
-            // Stop video speed changes
-            if (currentKey.Key == Key.Up || currentKey.Key == Key.Down)
+            if (currentKey.Key is Key.Up or Key.Down)
             {
-                if (MarkableCanvas.VideoPlayer.IsVisible && null != MarkableCanvas.VideoPlayer.SourceUri)
-                {
-                    MarkableCanvas.VideoPlayer.StopSpeedChange();
-                }
+                MarkableCanvas.VideoPlayer.StopSpeedChange();
             }
 
             // Force the end of a key repeat cycle
@@ -133,40 +129,9 @@ namespace Timelapse
             // Now test for particular shortcut keys and take the appropriate action as needed
             int keyRepeatCount = State.GetKeyRepeatCount(currentKey);
 
-            // Check for Flag Shortcut Keys
-            Key actualKey = currentKey.Key == Key.System ? currentKey.SystemKey : currentKey.Key;
-            string keyStr = "";
-            var modifiers = Keyboard.Modifiers;
-            if ((modifiers & ModifierKeys.Control) == ModifierKeys.Control) keyStr += "Ctrl+";
-            if ((modifiers & ModifierKeys.Shift) == ModifierKeys.Shift) keyStr += "Shift+";
-            if ((modifiers & ModifierKeys.Alt) == ModifierKeys.Alt) keyStr += "Alt+";
-            keyStr += actualKey.ToString();
-            if (State.FlagShortcutKeys != null && State.FlagShortcutKeys.ContainsValue(keyStr) && State.IsViewOnly == false)
+            if (TryHandleFlagShortcut(currentKey))
             {
-                if (currentKey.IsRepeat == false)
-                {
-                    bool shortcutHandled = false;
-                    foreach (var kvp in State.FlagShortcutKeys)
-                    {
-                        if (kvp.Value == keyStr)
-                        {
-                            if (DataEntryControls.ControlsByDataLabelThatAreVisible.TryGetValue(kvp.Key, out var control) && control.IsContentControlEnabled)
-                            {
-                                if (control is Timelapse.ControlsDataEntry.DataEntryFlag flagControl)
-                                {
-                                    bool isChecked = flagControl.ContentControl.IsChecked ?? false;
-                                    flagControl.ContentControl.IsChecked = !isChecked;
-                                    shortcutHandled = true;
-                                }
-                            }
-                        }
-                    }
-                    if (shortcutHandled)
-                    {
-                        currentKey.Handled = true;
-                        return;
-                    }
-                }
+                return;
             }
 
             switch (currentKey.Key)
@@ -352,17 +317,18 @@ namespace Timelapse
 
                 case Key.Up:
                 case Key.Down:
-                    // If not Ctrl, handle video speed here
                     if (!IsCondition.IsKeyControlDown())
                     {
-                        if (MarkableCanvas.VideoPlayer.IsVisible && null != MarkableCanvas.VideoPlayer.SourceUri)
+                        bool startedSeeking = currentKey.Key == Key.Up
+                            ? MarkableCanvas.VideoPlayer.StartFastForward()
+                            : MarkableCanvas.VideoPlayer.StartRewind();
+                        if (startedSeeking)
                         {
-                            if (currentKey.Key == Key.Up) MarkableCanvas.VideoPlayer.StartFastForward();
-                            else MarkableCanvas.VideoPlayer.StartRewind();
                             currentKey.Handled = true;
+                            break;
                         }
-                        break;
                     }
+
                     // See  constraints to Left/Right arrow keys, as similar constraints apply here.
                     // Single view 
                     // - Up/Down image processing
@@ -451,6 +417,32 @@ namespace Timelapse
             }
             currentKey.Handled = true;
 
+        }
+
+        private bool TryHandleFlagShortcut(KeyEventArgs keyEvent)
+        {
+            if (State.IsViewOnly || keyEvent.IsRepeat || State.FlagShortcutKeys == null ||
+                !KeyboardShortcut.TryFormat(keyEvent, out string shortcut))
+            {
+                return false;
+            }
+
+            foreach (var assignment in State.FlagShortcutKeys)
+            {
+                if (!string.Equals(assignment.Value, shortcut, StringComparison.OrdinalIgnoreCase) ||
+                    !DataEntryControls.ControlsByDataLabelThatAreVisible.TryGetValue(assignment.Key, out var control) ||
+                    !control.IsContentControlEnabled ||
+                    control is not ControlsDataEntry.DataEntryFlag flagControl)
+                {
+                    continue;
+                }
+
+                flagControl.ContentControl.IsChecked = !(flagControl.ContentControl.IsChecked ?? false);
+                keyEvent.Handled = true;
+                return true;
+            }
+
+            return false;
         }
 
         // Returns true if the currently focused element is contained by a MetadataEntryPanel

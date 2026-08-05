@@ -21,8 +21,8 @@
                 <DataGridTemplateColumn Header="Shortcut Key" Width="*">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBox Text="{Binding ShortcutKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
-                                     PreviewKeyDown="TextBox_PreviewKeyDown" 
+                            <TextBox Text="{Binding ShortcutKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     PreviewKeyDown="TextBox_PreviewKeyDown"
                                      HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Margin="2" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>

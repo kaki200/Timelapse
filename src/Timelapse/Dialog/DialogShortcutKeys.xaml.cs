@@ -1,25 +1,26 @@
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using Timelapse.Constant;
 using Timelapse.DataTables;
+using Timelapse.Util;
 
 namespace Timelapse.Dialog
 {
     public partial class DialogShortcutKeys : Window
     {
-        private TimelapseWindow parentWindow;
+        private readonly TimelapseWindow parentWindow;
 
-        public ObservableCollection<ShortcutItem> ShortcutItems { get; set; } = new ObservableCollection<ShortcutItem>();
+        public ObservableCollection<ShortcutItem> ShortcutItems { get; } = [];
 
         public class ShortcutItem : INotifyPropertyChanged
         {
             public string DataLabel { get; set; }
             public string Label { get; set; }
-            
+
             private string shortcutKey;
             public string ShortcutKey
             {
@@ -79,18 +80,9 @@ namespace Timelapse.Dialog
         {
             e.Handled = true;
 
-            // Ignore modifier keys alone
-            if (e.Key == Key.LeftShift || e.Key == Key.RightShift ||
-                e.Key == Key.LeftCtrl || e.Key == Key.RightCtrl ||
-                e.Key == Key.LeftAlt || e.Key == Key.RightAlt ||
-                e.Key == Key.LWin || e.Key == Key.RWin)
-            {
-                return;
-            }
-
             if (e.Key == Key.Escape)
             {
-                // Let escape close the dialog or just ignore
+                e.Handled = false;
                 return;
             }
 
@@ -102,16 +94,13 @@ namespace Timelapse.Dialog
                 }
                 else
                 {
-                    Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
-                    string keyStr = "";
-                    var modifiers = Keyboard.Modifiers;
-                    if ((modifiers & ModifierKeys.Control) == ModifierKeys.Control) keyStr += "Ctrl+";
-                    if ((modifiers & ModifierKeys.Shift) == ModifierKeys.Shift) keyStr += "Shift+";
-                    if ((modifiers & ModifierKeys.Alt) == ModifierKeys.Alt) keyStr += "Alt+";
-                    keyStr += actualKey.ToString();
-                    textBox.Text = keyStr;
+                    if (!KeyboardShortcut.TryFormat(e, out string shortcut))
+                    {
+                        return;
+                    }
+                    textBox.Text = shortcut;
                 }
-                
+
                 // Move focus to next row if possible, or just remove focus so the binding updates
                 textBox.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
             }
@@ -127,21 +116,26 @@ namespace Timelapse.Dialog
 
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            // Save to registry settings
-            var newShortcuts = new System.Collections.Generic.Dictionary<string, string>();
-            foreach (var item in ShortcutItems)
+            ShortcutItem[] assignedItems = ShortcutItems
+                .Where(item => !string.IsNullOrWhiteSpace(item.ShortcutKey))
+                .ToArray();
+            IGrouping<string, ShortcutItem> duplicate = assignedItems
+                .GroupBy(item => item.ShortcutKey, System.StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(group => group.Count() > 1);
+            if (duplicate != null)
             {
-                if (!string.IsNullOrWhiteSpace(item.ShortcutKey))
-                {
-                    newShortcuts[item.DataLabel] = item.ShortcutKey;
-                }
+                string labels = string.Join(", ", duplicate.Select(item => item.Label));
+                MessageBox.Show(this,
+                    $"The shortcut {duplicate.Key} is assigned more than once: {labels}",
+                    "Duplicate shortcut",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
             }
 
-            parentWindow.State.FlagShortcutKeys = newShortcuts;
-            
-            // The settings will be saved to the registry when Timelapse closes,
-            // but we can optionally force a write now if needed.
-            // parentWindow.State.WriteSettingsToRegistry();
+            parentWindow.State.FlagShortcutKeys = assignedItems.ToDictionary(
+                item => item.DataLabel,
+                item => item.ShortcutKey);
 
             DialogResult = true;
             Close();

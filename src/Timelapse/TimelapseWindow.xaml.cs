@@ -1,4 +1,4 @@
-using Microsoft.WindowsAPICodePack.Dialogs;
+﻿using Microsoft.WindowsAPICodePack.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -120,19 +120,13 @@ namespace Timelapse
             // Loaded callbacks, commands, etc.) that AppDomain.UnhandledException never sees because WPF's
             // dispatcher acts as an intermediate catch boundary.
             Application.Current.DispatcherUnhandledException += OnDispatcherUnhandledException;
-            
-            // Initialize Flyleaf video engine
-            try
+
+            // Flyleaf must be initialized on the UI thread before InitializeComponent creates
+            // the VideoPlayer control.
+            FlyleafLib.Engine.Start(new FlyleafLib.EngineConfig
             {
-                FlyleafLib.Engine.Start(new FlyleafLib.EngineConfig()
-                {
-                    FFmpegPath = ":FFmpeg"
-                });
-            }
-            catch (Exception ex)
-            {
-                System.IO.File.WriteAllText("flyleaf_crash.log", ex.ToString());
-            }
+                FFmpegPath = ":FFmpeg"
+            });
 
             InitializeComponent();
 
@@ -342,6 +336,7 @@ namespace Timelapse
 
             if (disposing)
             {
+                MarkableCanvas?.VideoPlayer?.Shutdown();
                 DataHandler?.Dispose();
                 MetadataDataHandler?.Dispose();
             }
@@ -356,9 +351,37 @@ namespace Timelapse
         // Setting e.Handled = true prevents WPF from terminating the app before our dialog has a chance to run.
         private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {
-            System.IO.File.AppendAllText("crash.log", "\n\nCRASH:\n" + e.Exception.ToString());
+            // During StartupUri construction there is no usable owner window. Use an ownerless
+            // message box so the original startup failure remains visible to the user.
+            if (!this.IsLoaded)
+            {
+                e.Handled = true;
+                System.Windows.MessageBox.Show(
+                    e.Exception.ToString(),
+                    "Timelapse failed to start",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                Application.Current.Shutdown(1);
+                return;
+            }
+
             e.Handled = true;
-            Environment.Exit(1);
+            if (e.Exception is SqlOperationException sqlEx)
+            {
+                ExceptionShutdownDialog dialog = new(this, e.Exception, sqlEx.Result);
+                dialog.ShowDialog();
+            }
+            else if (e.Exception.ToString().Contains("System.IO.PathTooLongException"))
+            {
+                Dialogs.FilePathTooLongDialog(this, e.Exception);
+            }
+            else
+            {
+                ExceptionShutdownDialog dialog = new(this, e.Exception);
+                dialog.ShowDialog();
+            }
+            Close();
+            Application.Current.Shutdown();
         }
 
         // If we get an exception that wasn't handled, show a dialog asking the user to send the bug report to us.
