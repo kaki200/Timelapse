@@ -371,6 +371,10 @@ namespace Timelapse.Images
         /// </summary>
         public void SetNewImage(BitmapSource bitmapSource, List<Marker> markersList)
         {
+            // A still image replaces the current file, so release any Flyleaf input rather
+            // than leaving its CanPlay/open state alive behind the collapsed video view.
+            VideoPlayer.ClearSource();
+
             // change to new markers
             markers = markersList;
 

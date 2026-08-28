@@ -32,6 +32,12 @@ namespace Timelapse.Controls
         public bool HasSource => this.sourceUri != null;
 
         /// <summary>
+        /// True while this control represents the current file, including the short period
+        /// while Flyleaf is still opening it.
+        /// </summary>
+        public bool IsCurrentVideo => this.Visibility == Visibility.Visible && this.HasSource;
+
+        /// <summary>
         /// Raised for wheel input received by Flyleaf's separate overlay window.
         /// </summary>
         public event MouseWheelEventHandler VideoMouseWheel;
@@ -60,6 +66,7 @@ namespace Timelapse.Controls
         private readonly FlyleafLib.MediaPlayer.Player player;
         private long FileIndex; // A pointer to the ImageRow
         private Uri sourceUri; // The currently loaded video
+        private bool isSourceReady; // True only after Flyleaf has opened sourceUri
         private Window inputOverlay;
         private Window inputSurface;
 
@@ -83,6 +90,7 @@ namespace Timelapse.Controls
         private bool isKeyboardSeeking;
         private int keyboardSeekDirection;
         private double keyboardSeekSpeed;
+        private long keyboardSeekTargetTicks;
         private bool resumeAfterKeyboardSeek;
         private DateTime lastKeyboardSeekUpdate;
 
@@ -384,6 +392,14 @@ namespace Timelapse.Controls
         public void SetSource(Uri source, long fileIndex)
         {
             this.CancelKeyboardSeek();
+            this.TimerUpdatePosition.Stop();
+            this.isSourceReady = false;
+
+            // OpenAsync does not immediately clear CanPlay. Without explicitly closing the
+            // previous input, a key pressed while the next video is opening can seek the old
+            // decoder. This is especially visible when images and videos alternate.
+            this.StopPlayerInput();
+
             this.isDirectVideoDragActive = false;
             this.wasVideoPanned = false;
             this.ClearBoundingBoxes();
@@ -395,9 +411,6 @@ namespace Timelapse.Controls
                 ? null
                 : GlobalReferences.MainWindow?.GetBoundingBoxesForCurrentFile(GlobalReferences.MainWindow.DataHandler.FileDatabase.FileTable[(int)fileIndex].ID);
             this.ButtonEnableBestFrameIfNeeded();
-
-            // Stop the timers for now
-            this.TimerUpdatePosition.Stop();
 
             this.videoZoom = 1.0;
             this.videoOffsetX = 0;
@@ -417,12 +430,44 @@ namespace Timelapse.Controls
                 this.player.OpenAsync(source.LocalPath);
             }
         }
+
+        /// <summary>
+        /// Release the video belonging to the previous file when a new still image is shown.
+        /// Merely collapsing the Flyleaf host leaves its decoder and CanPlay state alive.
+        /// </summary>
+        public void ClearSource()
+        {
+            this.CancelKeyboardSeek();
+            this.TimerUpdatePosition.Stop();
+            this.sourceUri = null;
+            this.isSourceReady = false;
+            this.IsEnabled = false;
+            this.PlayOrPause.IsChecked = false;
+            this.StopPlayerInput();
+        }
+
+        private void StopPlayerInput()
+        {
+            try
+            {
+                this.player.Stop();
+            }
+            catch (Exception)
+            {
+                // Flyleaf can already be between inputs when rapid file navigation cancels an
+                // OpenAsync. The next OpenAsync still starts with isSourceReady cleared.
+            }
+        }
         #endregion
 
         #region Flyleaf opened / ended
         private void Player_OpenCompleted(object sender, FlyleafLib.MediaPlayer.OpenCompletedArgs e)
         {
-            if (e.Error != null) return;
+            if (e.Error != null)
+            {
+                this.isSourceReady = false;
+                return;
+            }
             System.Windows.Application.Current.Dispatcher.InvokeAsync(() => Video_MediaOpened(sender, null));
         }
 
@@ -431,10 +476,12 @@ namespace Timelapse.Controls
         {
             if (this.sourceUri == null)
             {
+                this.isSourceReady = false;
                 this.IsEnabled = false;
                 return;
             }
 
+            this.isSourceReady = true;
             this.IsEnabled = true;
 
             // Determine and set the FrameRate, FrameToShow, VideoDuraton and Slider Scrubbing Duration values
@@ -578,7 +625,7 @@ namespace Timelapse.Controls
 
         private bool TryStartKeyboardSeek(int direction, double speed)
         {
-            if (this.Visibility != Visibility.Visible || !this.HasSource || !this.player.CanPlay)
+            if (!this.IsCurrentVideo || !this.isSourceReady || !this.player.CanPlay)
             {
                 return false;
             }
@@ -589,10 +636,12 @@ namespace Timelapse.Controls
                 this.player.Pause();
                 this.TimerUpdatePosition.Stop();
                 this.isKeyboardSeeking = true;
+                this.keyboardSeekTargetTicks = this.player.CurTime;
                 this.lastKeyboardSeekUpdate = DateTime.UtcNow;
             }
             else if (this.keyboardSeekDirection != Math.Sign(direction))
             {
+                this.keyboardSeekTargetTicks = this.player.CurTime;
                 this.lastKeyboardSeekUpdate = DateTime.UtcNow;
             }
 
@@ -610,7 +659,12 @@ namespace Timelapse.Controls
             }
 
             bool resumePlayback = this.resumeAfterKeyboardSeek;
+            long finalSeekTargetTicks = this.keyboardSeekTargetTicks;
             this.CancelKeyboardSeek();
+
+            // A Flyleaf seek completes asynchronously. Keep the final logical target instead
+            // of allowing a late completion from an older seek to snap the position backwards.
+            this.player.CurTime = finalSeekTargetTicks;
 
             if (resumePlayback && this.Visibility == Visibility.Visible && this.HasSource)
             {
@@ -632,12 +686,13 @@ namespace Timelapse.Controls
             this.isKeyboardSeeking = false;
             this.keyboardSeekDirection = 0;
             this.keyboardSeekSpeed = 0;
+            this.keyboardSeekTargetTicks = 0;
             this.resumeAfterKeyboardSeek = false;
         }
 
         private void TimerKeyboardSeek_Tick(object sender, EventArgs e)
         {
-            if (!this.isKeyboardSeeking || !this.HasSource || !this.player.CanPlay)
+            if (!this.isKeyboardSeeking || !this.isSourceReady || !this.HasSource || !this.player.CanPlay)
             {
                 return;
             }
@@ -650,7 +705,11 @@ namespace Timelapse.Controls
                 return;
             }
 
-            long target = this.player.CurTime +
+            // Do not use player.CurTime as the base here. Flyleaf completes seeks
+            // asynchronously, so CurTime can temporarily report an older request. Basing the
+            // next target on that value makes fast-forward visibly jump backwards. Maintain a
+            // monotonic logical target owned by Timelapse instead.
+            long target = this.keyboardSeekTargetTicks +
                           TimeSpan.FromSeconds(elapsedSeconds * this.keyboardSeekSpeed * this.keyboardSeekDirection).Ticks;
             if (this.player.Duration > 0 && target >= this.player.Duration)
             {
@@ -664,6 +723,7 @@ namespace Timelapse.Controls
                 this.keyboardSeekSpeed = 0;
             }
 
+            this.keyboardSeekTargetTicks = target;
             this.player.CurTime = target;
             if (this.FrameRate is > 0)
             {

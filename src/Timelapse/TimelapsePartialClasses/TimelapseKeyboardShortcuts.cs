@@ -317,16 +317,21 @@ namespace Timelapse
 
                 case Key.Up:
                 case Key.Down:
-                    if (!IsCondition.IsKeyControlDown())
+                    if (!IsCondition.IsKeyControlDown() && MarkableCanvas.VideoPlayer.IsCurrentVideo)
                     {
-                        bool startedSeeking = currentKey.Key == Key.Up
-                            ? MarkableCanvas.VideoPlayer.StartFastForward()
-                            : MarkableCanvas.VideoPlayer.StartRewind();
-                        if (startedSeeking)
+                        if (currentKey.Key == Key.Up)
                         {
-                            currentKey.Handled = true;
-                            break;
+                            MarkableCanvas.VideoPlayer.StartFastForward();
                         }
+                        else
+                        {
+                            MarkableCanvas.VideoPlayer.StartRewind();
+                        }
+
+                        // Consume the key for a video even during its short OpenAsync window.
+                        // Otherwise it falls through to the still-image difference command.
+                        currentKey.Handled = true;
+                        break;
                     }
 
                     // See  constraints to Left/Right arrow keys, as similar constraints apply here.
