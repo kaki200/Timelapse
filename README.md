@@ -17,6 +17,21 @@ Timelapse is optimized for those wanting to turn their images into meaningful da
 
 Timelapse  works with image recognition data, where it integrates access to AddaxAI / Megadetector. Timelapse imports the recognition file produced by that software (or other compatible image recognition tool), and displays detected items within bounding boxes. Queries can be run against recognized entities.
 
+### Changes in this fork
+
+This fork keeps the original Timelapse workflow while adding the following functionality:
+
+* Keyboard shortcuts can be assigned to choice/flag fields. The assigned key is shown next to the field label and toggles the corresponding flag without requiring a mouse click.
+* Video playback has been migrated to [Flyleaf](https://github.com/SuRGeoNix/Flyleaf), with GPU-backed zoom and pan, mouse-wheel zoom, and direct drag movement.
+* Video keyboard controls are retained: Up/Down provide continuous fast-forward and rewind while a key is held, including support for the configured playback speeds.
+* Video seeking and focus handling were adjusted for folders containing both images and videos, so keyboard navigation continues to work when the displayed file type changes.
+
+### FFmpeg files are not included in this repository
+
+The FFmpeg native binaries are intentionally excluded from the Git repository and from source checkouts. They are large third-party runtime files and are distributed separately under the applicable FFmpeg/Flyleaf licenses. To build or run the Flyleaf video player from a source checkout, obtain the matching native FFmpeg binaries from the `Flyleaf.FFmpeg` package (or another compatible FFmpeg distribution) and place them in `src\\Timelapse\\FFmpeg\\` as described in the package documentation. Do not commit those binaries to this repository.
+
+ExifTool is also a separate dependency; see [Prerequisites](#prerequisites) for its download and placement instructions.
+
 ### Contributing
 
 Bug reports, feature requests, and feedback are most welcome. Let us know! We can't improve the system if we don't hear from you. If you wish to co-develop this project, see below. 
