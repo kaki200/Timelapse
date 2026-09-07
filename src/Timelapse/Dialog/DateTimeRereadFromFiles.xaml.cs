@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -97,7 +96,6 @@ namespace Timelapse.Dialog
                 // Provide feedback that we are in the second pass, disabling the Cancel button in the progress bar as we shouldn't cancel half-way through a database update.
                 string message = $"Pass 2: Updating {filesToAdjust.Count} files. Please wait...";
                 Progress.Report(new(100, message, false, true));
-                Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allow the UI to update.
 
                 //// Update the database
                 DatabaseUpdateFileDates(filesToAdjust);
@@ -190,7 +188,6 @@ namespace Timelapse.Dialog
                     int percentDone = Convert.ToInt32(fileIndex / Convert.ToDouble(count) * 100.0);
                     progress.Report(new(percentDone,
                         $"Pass 1: Checking dates for {fileIndex} / {count} files", true, false));
-                    Thread.Sleep(ThrottleValues.RenderingBackoffTime);
                     lastRefreshDateTime = DateTime.Now;
                 }
             }
@@ -238,7 +235,7 @@ namespace Timelapse.Dialog
             {
                 imagesToUpdate.Add(image.GetDateTimeColumnTuples());
             }
-            fileDatabase.UpdateFiles(imagesToUpdate);  // Write the updates to the database
+            fileDatabase.UpdateFiles(imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);  // Write the updates to the database
         }
         #endregion
 

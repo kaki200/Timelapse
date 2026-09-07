@@ -9,6 +9,7 @@ using Timelapse.ControlsDataEntry;
 using Timelapse.DataStructures;
 using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
+using Timelapse.Dialog;
 using Timelapse.Util;
 
 namespace Timelapse.Database
@@ -39,7 +40,11 @@ namespace Timelapse.Database
             columnToUpdate.Columns.Add(new(dataLabel, value)); // Populate the data
             columnToUpdate.SetWhere(fileID);
 
-            this.Database.Update(DBTables.FileData, columnToUpdate);
+            SqlOperationResult updateResult = this.Database.Update(DBTables.FileData, columnToUpdate);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFile", this.FilePath, updateResult);
+            }
         }
 
         /// <summary>
@@ -61,7 +66,11 @@ namespace Timelapse.Database
                 columnToUpdate.Columns.Add(new(dataLabel, value));
                 columnToUpdate.SetWhere(fileID);
 
-                this.Database.Update(DBTables.FileData, columnToUpdate);
+                SqlOperationResult updateResult = this.Database.Update(DBTables.FileData, columnToUpdate);
+                if (!updateResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFileAsync", this.FilePath, updateResult);
+                }
             }
             finally
             {
@@ -139,21 +148,37 @@ namespace Timelapse.Database
 
 
         // Given a list of column/value pairs (the string,object) and the FILE name indicating a row, update it
-        public void UpdateFiles(List<ColumnTuplesWithWhere> filesToUpdate)
+        // busyTimeoutMs defaults to 0 (short retry budget) since this is also called synchronously
+        // from the UI thread (e.g. DataEntryHandler.DateTimeUpdate on every date/time picker edit).
+        // Only pass ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs from call sites confirmed
+        // to run on a background thread (see SQLiteNeededFixes.md finding #7).
+        public void UpdateFiles(List<ColumnTuplesWithWhere> filesToUpdate, int busyTimeoutMs = 0)
         {
             CreateBackupIfNeeded();
-            Database.Update(DBTables.FileData, filesToUpdate);
+            SqlOperationResult updateResult = Database.Update(DBTables.FileData, filesToUpdate, busyTimeoutMs);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFiles(List)", this.FilePath, updateResult);
+            }
         }
 
         public void UpdateFiles(ColumnTuplesWithWhere filesToUpdate)
         {
             List<ColumnTuplesWithWhere> imagesToUpdateList = [filesToUpdate];
-            Database.Update(DBTables.FileData, imagesToUpdateList);
+            SqlOperationResult updateResult = Database.Update(DBTables.FileData, imagesToUpdateList);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFiles(ColumnTuplesWithWhere)", this.FilePath, updateResult);
+            }
         }
 
         public void UpdateFiles(ColumnTuple columnToUpdate)
         {
-            Database.Update(DBTables.FileData, columnToUpdate);
+            SqlOperationResult updateResult = Database.Update(DBTables.FileData, columnToUpdate);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFiles(ColumnTuple)", this.FilePath, updateResult);
+            }
         }
 
         // Given a range of selected files, update the field identified by dataLabel with the value from valueSource
@@ -166,10 +191,7 @@ namespace Timelapse.Database
         // Given a range of selected files, update the field identified by dataLabel with the given value
         public async Task UpdateFiles(string value, string dataLabel, int fromIndex, int toIndex)
         {
-            if (fromIndex < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(fromIndex));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegative(fromIndex);
             if (toIndex < fromIndex || toIndex > CountAllCurrentlySelectedFiles - 1)
             {
                 throw new ArgumentOutOfRangeException(nameof(toIndex));
@@ -259,29 +281,24 @@ namespace Timelapse.Database
 
                 // Update bci directly — we're on the UI thread here, so direct assignment renders
                 // immediately once the await below yields back to the dispatcher.
-                if (bci != null)
-                {
-                    bci.Message = $"Updating the database for {count:N0} files...";
-                }
+                bci?.Message = $"Updating the database for {count:N0} files...";
 
                 // Wrapping Database.Update in Task.Run serves two purposes:
                 // 1. The await yields to the dispatcher, allowing the message above to render.
                 // 2. The database update itself no longer blocks the UI thread.
-                string methodName = GetCallerName();
-                await Task.Run(() =>
+                SqlOperationResult result = await Task.Run(() =>
                 {
                     CreateBackupIfNeeded();
-                    SqlOperationResult result = Database.Update(DBTables.FileData, Constant.DatabaseColumn.ID, listOfIDs, dataLabel, value);
-                    if (!result.Success)
-                    {
-                        SqlOperationResult.GenerateExceptionDialog(result, methodName);
-                    }
+                    return Database.Update(DBTables.FileData, Constant.DatabaseColumn.ID, listOfIDs, dataLabel, value, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
                 });
-
-                if (bci != null)
+                if (!result.Success)
                 {
-                    bci.Reset(false);
+                    bci?.Reset(false);
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateFilesCore", this.FilePath, result);
+                    return;
                 }
+
+                bci?.Reset(false);
             }
             finally
             {
@@ -295,7 +312,20 @@ namespace Timelapse.Database
         {
             // don't trigger backups on image set updates as none of the properties in the image set table is particularly important
             // For example, this avoids creating a backup when a custom selection is reverted to all when Timelapse exits.
-            Database.Update(DBTables.ImageSet, ImageSet.CreateColumnTuplesWithWhereByID());
+            SqlOperationResult updateResult = Database.Update(DBTables.ImageSet, ImageSet.CreateColumnTuplesWithWhereByID());
+            if (!updateResult.Success)
+            {
+                // Database.Update already retried automatically (short budget, ~2.5s) before
+                // reporting failure. Offer exactly one more manual retry before the fatal dialog.
+                if (Dialogs.TimelapseOperationRetryDialog(GlobalReferences.MainWindow, "save your sort/search settings", updateResult) == true)
+                {
+                    updateResult = Database.Update(DBTables.ImageSet, ImageSet.CreateColumnTuplesWithWhereByID());
+                }
+                if (!updateResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateSyncImageSetToDatabase", this.FilePath, updateResult);
+                }
+            }
         }
 
         public void UpdateSyncMarkerToDatabase(MarkerRow marker)
@@ -304,7 +334,11 @@ namespace Timelapse.Database
             ThrowIf.IsNullArgument(marker, nameof(marker));
 
             CreateBackupIfNeeded();
-            Database.Update(DBTables.Markers, marker.CreateColumnTuplesWithWhereByID());
+            SqlOperationResult updateResult = Database.Update(DBTables.Markers, marker.CreateColumnTuplesWithWhereByID());
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateSyncMarkerToDatabase", this.FilePath, updateResult);
+            }
         }
         #endregion
 
@@ -316,7 +350,12 @@ namespace Timelapse.Database
         {
             // update markers in database
             CreateBackupIfNeeded();
-            Database.Update(DBTables.Markers, markersToUpdate);
+            SqlOperationResult updateResult = Database.Update(DBTables.Markers, markersToUpdate);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateMarkers", this.FilePath, updateResult);
+                return;
+            }
 
             // Refresh the markers data table
             RefreshMarkers();
@@ -408,7 +447,13 @@ namespace Timelapse.Database
             if (imagesToUpdate.Count > 0)
             {
                 CreateBackupIfNeeded();
-                Database.Update(DBTables.FileData, imagesToUpdate);
+                // All four callers confirmed to run on a background thread (inside Task.Run) — see
+                // SQLiteNeededFixes.md finding #7 — so it's safe to opt into the extended budget.
+                SqlOperationResult updateResult = Database.Update(DBTables.FileData, imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
+                if (!updateResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateAdjustedFileTimes", this.FilePath, updateResult);
+                }
             }
         }
 
@@ -452,7 +497,13 @@ namespace Timelapse.Database
             if (imagesToUpdate.Count > 0)
             {
                 CreateBackupIfNeeded();
-                Database.Update(DBTables.FileData, imagesToUpdate);
+                // Sole caller (DateTimeCorrectAmbiguous.xaml.cs) confirmed to run on a background
+                // thread (inside Task.Run) — see SQLiteNeededFixes.md finding #7.
+                SqlOperationResult updateResult = Database.Update(DBTables.FileData, imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
+                if (!updateResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateExchangeDayAndMonthInFileDates", this.FilePath, updateResult);
+                }
             }
         }
         #endregion
@@ -496,7 +547,11 @@ namespace Timelapse.Database
                                    + Sql.Where
                                    + DatabaseColumn.RelativePath + Sql.BooleanEquals + Sql.Quote(oldPrefixPath);
             }
-            Database.ExecuteNonQueryWithRollback(query);
+            SqlOperationResult updateResult = Database.ExecuteNonQueryWithRollback(query);
+            if (!updateResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, true, "The problem occurred in UpdateRelativePathByReplacingPrefix", this.FilePath, updateResult);
+            }
         }
         #endregion
     }

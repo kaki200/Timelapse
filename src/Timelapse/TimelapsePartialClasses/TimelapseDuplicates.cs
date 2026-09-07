@@ -235,10 +235,17 @@ namespace Timelapse
                                 // We only use the first classification, as we no longer support multiple classifications per bounding box
                                 // The bbox.Classifications is a list of KeyValuePairs, where the Key is the classification category (the species name) and the Value is the confidence
                                 // So we have to look up the classification category ID
-                                string category = this.DataHandler.FileDatabase.classificationCategoriesDictionary.FirstOrDefault(x=> x.Value == bbox.Classifications[0].Key).Key;
-                                detectionColumnsToUpdate.Add(new(DetectionColumns.Classification, category));
-                                detectionColumnsToUpdate.Add(new(DetectionColumns.ClassificationConf,
-                                    (float)Convert.ToDouble(bbox.Classifications[0].Value)));
+                                string category = this.DataHandler.FileDatabase.classificationCategoriesDictionary.FirstOrDefault(x => x.Value == bbox.Classifications[0].Key).Key;
+                                if (category != null)
+                                {
+                                    detectionColumnsToUpdate.Add(new(DetectionColumns.Classification, category));
+                                    detectionColumnsToUpdate.Add(new(DetectionColumns.ClassificationConf,
+                                        (float)Convert.ToDouble(bbox.Classifications[0].Value)));
+                                }
+                                else
+                                {
+                                    TracePrint.PrintMessage($"DuplicateCurrentRecord: classification category '{bbox.Classifications[0].Key}' not found in dictionary — inserting detection without classification.");
+                                }
                             }
                             detectionInsertionStatements.Add(detectionColumnsToUpdate);
 
@@ -400,6 +407,7 @@ namespace Timelapse
                 for (int previousFileIndex = selectedRowIndex - 1; previousFileIndex >= 0; previousFileIndex--)
                 {
                     previousOrNextImageRow = DataHandler.FileDatabase.FileTable[previousFileIndex];
+                    if (previousOrNextImageRow == null) break;
                     otherFilesPath = Path.Combine(previousOrNextImageRow.RelativePath, previousOrNextImageRow.File);
                     if (otherFilesPath == currentPath)
                     {
@@ -414,6 +422,7 @@ namespace Timelapse
                 for (int nextFileIndex = selectedRowIndex + 1; nextFileIndex < DataHandler.FileDatabase.CountAllCurrentlySelectedFiles; nextFileIndex++)
                 {
                     previousOrNextImageRow = DataHandler.FileDatabase.FileTable[nextFileIndex];
+                    if (previousOrNextImageRow == null) break;
                     otherFilesPath = Path.Combine(previousOrNextImageRow.RelativePath, previousOrNextImageRow.File);
                     if (otherFilesPath == currentPath)
                     {

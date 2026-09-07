@@ -4,25 +4,12 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using Timelapse.Controls;
-using Timelapse.DebuggingSupport;
 using Timelapse.Dialog;
 
 namespace Timelapse
 {
     public partial class TimelapseWindow
     {
-        public async void HandleArgumentsOnOpen()
-        {
-            try
-            {
-                await HandleArgumentsOnOpenAsync();
-            }
-            catch (Exception ex)
-            {
-                TracePrint.CatchException(ex.Message);
-            }
-        }
-
         private async Task HandleArgumentsOnOpenAsync()
         {
             // Note: Timelapse allows  -viewOnly, -relativepath <relative path>, -templatepath <template path>, -templateeditor arguments to be combined.
@@ -46,7 +33,7 @@ namespace Timelapse
             //      if the user switches back to the main Timelapse window
             if (Arguments.IsOpenInTemplateEditor)
             {
-                this.DoSwitchToTheTemplateEditor();
+                this.DoSwitchToTheTemplateEditor(null);
 
                 // If a template was specified, load it into the template editor
                 if (null != this.TimelapseTemplateEditor && false == string.IsNullOrEmpty(Arguments.TdbFile) && File.Exists(Arguments.TdbFile))

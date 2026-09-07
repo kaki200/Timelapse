@@ -4,7 +4,9 @@ using System.Data;
 using System.IO;
 using System.Threading.Tasks;
 using Timelapse.Constant;
+using Timelapse.DataStructures;
 using Timelapse.DataTables;
+using Timelapse.Dialog;
 using Timelapse.Enums;
 using Timelapse.Recognition;
 using Timelapse.Util;
@@ -116,7 +118,17 @@ namespace Timelapse.Database
                 }
             }
             // Part 6. We are done.
-            destinationDdb.ExecuteNonQueryWithRollback(query);
+            // Deliberately NOT opted into the extended BUSY/LOCKED retry budget: unlike
+            // MergeSourceIntoDestinationDdb below, this is called synchronously on the UI thread
+            // (MergeCheckoutChooseSubfolder's DoCheckoutAsync calls it directly, no Task.Run), so a
+            // longer retry window here would freeze the UI rather than just taking longer in the background.
+            SqlOperationResult mergeResult = destinationDdb.ExecuteNonQueryWithRollback(query);
+            if (!mergeResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    destinationDdb.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CheckoutDatabaseWithRelativePath", destinationDdb.FilePath, mergeResult);
+            }
         }
         #endregion
 
@@ -217,8 +229,11 @@ namespace Timelapse.Database
                 }
             }
 
-            // Part 7. The query is now done, execute it
-            SqlOperationResult result = destinationDdb.ExecuteNonQueryWithRollback(query);
+            // Part 7. The query is now done, execute it.
+            // Always invoked from a background thread (MergeCheckinDatabaseFiles' MergeDatabasesAsync,
+            // Task.Run-wrapped), so it's safe to opt into the extended BUSY/LOCKED retry budget for
+            // network-share resilience.
+            SqlOperationResult result = destinationDdb.ExecuteNonQueryWithRollback(query, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
             if (!result.Success)
             {
                 return DatabaseFileErrorsEnum.MergeFailedDueToSQLiteQueryError;

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Timelapse.Constant;
 using Timelapse.Controls;
@@ -79,6 +80,8 @@ namespace Timelapse
 
         #region Private Variables
         private bool disposed;
+        private int _readErrorDialogPending; // 0 = none, 1 = dialog pending or showing; accessed via Interlocked
+        private readonly DispatcherTimer _titleResizeTimer = new();
         private List<MarkersForCounter> markersOnCurrentFile;   // Holds a list of all markers for each counter on the current file
 
         private CommonDatabase templateDatabase;                      // The database that holds the template
@@ -137,8 +140,8 @@ namespace Timelapse
             MarkableCanvas.PreviewMouseDown += MarkableCanvas_PreviewMouseDown;
             MarkableCanvas.MouseEnter += MarkableCanvas_MouseEnter;
             MarkableCanvas.MarkerEvent += MarkableCanvas_RaiseMarkerEvent;
-            MarkableCanvas.ThumbnailGrid.DoubleClick += ThumbnailGrid_DoubleClick;
-            MarkableCanvas.ThumbnailGrid.SelectionChanged += ThumbanilGrid_SelectionChanged;
+            MarkableCanvas.ThumbnailGridVirtualized.DoubleClick += ThumbnailGridVirtualized_DoubleClick;
+            MarkableCanvas.ThumbnailGridVirtualized.SelectionChanged += ThumbnailGridVirtualized_SelectionChanged;
             MarkableCanvas.SwitchedToThumbnailGridViewEventAction += SwitchedToThumbnailGrid;
             MarkableCanvas.SwitchedToSingleImageViewEventAction += SwitchedToSingleImagesView;
 
@@ -165,11 +168,25 @@ namespace Timelapse
             // Record SQL read failures in SqlErrorState rather than immediately showing a dialog.
             // Safe to call from any thread (e.g. GetDataTableFromSelectAsync runs on a thread-pool thread).
             // Only the first error is recorded; subsequent calls are ignored so that a cascade of async
-            // operations all failing after a single root cause does not cause multiple dialogs.
-            // Callers at natural task-completion points should check SqlErrorState.HasError and call
-            // SqlOperationResult.GenerateExceptionDialog(SqlErrorState.SqlOperationResult, SqlErrorState.Context).
+            // When a read fails, record the error and show the notice dialog immediately (it is
+            // non-fatal and has an OK button only). The dialog is shown via Dispatcher so it works
+            // whether the error fires on the UI thread or a background thread. Resetting both
+            // _errorFired and SqlErrorState after the dialog closes ensures subsequent errors can
+            // fire again without the gate staying permanently locked.
             SQLiteWrapper.OnReadError = (context, sqlOperationResult) =>
+            {
                 SqlErrorState.TryRecord(sqlOperationResult, context);
+                if (Interlocked.CompareExchange(ref _readErrorDialogPending, 1, 0) == 0)
+                {
+                    string logMessage = $"SQLite read error. Context: {context}.";
+                    if (!string.IsNullOrEmpty(sqlOperationResult?.ErrorMessage)) logMessage += $" DB error: {sqlOperationResult.ErrorMessage}.";
+                    if (!string.IsNullOrEmpty(sqlOperationResult?.FailingStatement)) logMessage += $" SQL: {sqlOperationResult.FailingStatement}.";
+                    if (sqlOperationResult?.Exception != null) AppLog.Error(logMessage, sqlOperationResult.Exception);
+                    else AppLog.Error(logMessage);
+                    Dialogs.TimelapseReadErrorNoticeDialog(GlobalReferences.MainWindow, sqlOperationResult, context,
+                        onClose: () => _readErrorDialogPending = 0);
+                }
+            };
 
             // Populate the most recent image set list
             MenuItemRecentImageSets_RefreshItems();
@@ -213,63 +230,84 @@ namespace Timelapse
 
             // Mute the harmless 'System.Windows.Data Error: 4 : Cannot find source for binding with reference' (I think its from Avalon dock)
             PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Critical;
+
+            // Debounced title update: fires 400ms after the user stops dragging the window edge.
+            _titleResizeTimer.Interval = TimeSpan.FromMilliseconds(400);
+            _titleResizeTimer.Tick += (_, _) => { _titleResizeTimer.Stop(); UpdateWindowTitle(); };
+            SizeChanged += (_, _) =>
+            {
+                if (IsFileDatabaseAvailable())
+                {
+                    _titleResizeTimer.Stop();
+                    _titleResizeTimer.Start();
+                }
+            };
         }
         #endregion
 
         #region Window Loading, Closing
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // Abort if some of the required dependencies are missing
-            if (Dependencies.AreRequiredBinariesPresent(Assembly.GetExecutingAssembly(), out string missingAssemblies) == false)
+            try
             {
-                Dialogs.DependencyFilesMissingDialog(missingAssemblies);
-                Application.Current.Shutdown();
-            }
+                // Abort if some of the required dependencies are missing
+                if (Dependencies.AreRequiredBinariesPresent(Assembly.GetExecutingAssembly(), out string missingAssemblies) == false)
+                {
+                    Dialogs.DependencyFilesMissingDialog(missingAssemblies);
+                    AppLog.Error($"Required binaries missing ({missingAssemblies}). Shutting down.");
+                    Application.Current.Shutdown();
+                }
 
-            // Check for updates at least once a day
-            if (DateTime.Now.Year != State.MostRecentCheckForUpdates.Year ||
-            DateTime.Now.Month != State.MostRecentCheckForUpdates.Month ||
-            DateTime.Now.Day != State.MostRecentCheckForUpdates.Day)
+                // Check for updates at least once a day
+                if (DateTime.Now.Year != State.MostRecentCheckForUpdates.Year ||
+                DateTime.Now.Month != State.MostRecentCheckForUpdates.Month ||
+                DateTime.Now.Day != State.MostRecentCheckForUpdates.Day)
+                {
+                    VersionChecks updater = new(this, VersionUpdates.ApplicationName, VersionUpdates.LatestVersionFileNameXML);
+                    updater.TryCheckForNewVersionAndDisplayResultsAsNeeded(false);
+                    State.MostRecentCheckForUpdates = DateTime.Now;
+                }
+                if (State.FirstTimeFileLoading)
+                {
+                    // Load the previously saved layout. If there is none, TryLoad will default to a reasonable layout and window size/position.
+                    this.AvalonLayout_TryLoad(AvalonLayoutTags.LastUsed);
+                    //FolderMetadataPane.IsEnabled = false; // Needed as Try Load will set it to true if that was its last state
+                    State.FirstTimeFileLoading = false;
+                }
+
+                if (!SystemStatus.CheckAndGetLangaugeAndCulture(out _, out _, out string displayname))
+                {
+                    HelpDocument.WarningRegionLanguage = displayname;
+                }
+
+                // By default, we now set everything to use the Invariant culture, although this
+                // isn't tested to ensure it works
+                Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+
+                // Add a context menu to the data controls that allows a user to restore default values to the current or selected file
+                // I originally had this in the XAML, but for some reason it complains if put there.
+                ContextMenu menuRestoreDefaults = new();
+                MenuItem menuItemRestoreDefaults = new();
+
+                menuItemRestoreDefaults.Click += MenuItemRestoreDefaultValues_Click;
+                menuRestoreDefaults.Opened += MenuRestoreDefaults_Opened;
+                menuRestoreDefaults.Items.Add(menuItemRestoreDefaults);
+                DataEntryControls.ContextMenu = menuRestoreDefaults;
+                DataEntryControlPanel.IsVisible = false;
+                InstructionPane.IsActive = true;
+                EnableOrDisableMenusAndControls();
+
+                // Initialize the modern notification system
+                ToastNotifier = new(this);
+
+                // Depending on the arguments, we may open Timelapse in particular wasy, or initiate it with a supplied template and/or data file
+                await HandleArgumentsOnOpenAsync();
+            }
+            catch (Exception ex)
             {
-                VersionChecks updater = new(this, VersionUpdates.ApplicationName, VersionUpdates.LatestVersionFileNameXML);
-                updater.TryCheckForNewVersionAndDisplayResultsAsNeeded(false);
-                State.MostRecentCheckForUpdates = DateTime.Now;
+                AppLog.Error("Window_Loaded: Unhandled exception.", ex);
+                TracePrint.CatchException(ex.Message);
             }
-            if (State.FirstTimeFileLoading)
-            {
-                // Load the previously saved layout. If there is none, TryLoad will default to a reasonable layout and window size/position.
-                this.AvalonLayout_TryLoad(AvalonLayoutTags.LastUsed);
-                //FolderMetadataPane.IsEnabled = false; // Needed as Try Load will set it to true if that was its last state
-                State.FirstTimeFileLoading = false;
-            }
-
-            if (!SystemStatus.CheckAndGetLangaugeAndCulture(out _, out _, out string displayname))
-            {
-                HelpDocument.WarningRegionLanguage = displayname;
-            }
-
-            // By default, we now set everything to use the Invariant culture, although this 
-            // isn't tested to ensure it works
-            Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-
-            // Add a context menu to the data controls that allows a user to restore default values to the current or selected file
-            // I originally had this in the XAML, but for some reason it complains if put there.
-            ContextMenu menuRestoreDefaults = new();
-            MenuItem menuItemRestoreDefaults = new();
-
-            menuItemRestoreDefaults.Click += MenuItemRestoreDefaultValues_Click;
-            menuRestoreDefaults.Opened += MenuRestoreDefaults_Opened;
-            menuRestoreDefaults.Items.Add(menuItemRestoreDefaults);
-            DataEntryControls.ContextMenu = menuRestoreDefaults;
-            DataEntryControlPanel.IsVisible = false;
-            InstructionPane.IsActive = true;
-            EnableOrDisableMenusAndControls();
-
-            // Initialize the modern notification system
-            ToastNotifier = new(this);
-
-            // Depending on the arguments, we may open Timelapse in particular wasy, or initiate it with a supplied template and/or data file
-            this.HandleArgumentsOnOpen();
         }
 
         private void Window_LocationChanged(object sender, EventArgs e)
@@ -287,16 +325,9 @@ namespace Timelapse
         private void DeleteTheDeletedFilesFolderIfNeeded()
         {
             string deletedFolderPath = Path.Combine(DataHandler.FileDatabase.RootPathToImages, Constant.File.DeletedFilesFolder);
-            string[] extensions = [Constant.File.JpgFileExtension, Constant.File.ASFFileExtension, Constant.File.AviFileExtension, Constant.File.MovFileExtension, Constant.File.Mp4FileExtension
-            ];
-            int howManyDeletedFiles = Directory.Exists(deletedFolderPath) 
-                ? Directory.GetFiles(deletedFolderPath, "*.*", SearchOption.AllDirectories).Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
-                    .ToArray().Length
-                :0;
-
-            // If there are no files, there is nothing to delete
-            if (howManyDeletedFiles <= 0)
+            if (false == Directory.Exists(deletedFolderPath))
             {
+                // The folder doesn't exist, so nothing to delete
                 return;
             }
 
@@ -307,7 +338,7 @@ namespace Timelapse
             // if its ask the user, then set the flag according to the response
             if (State.DeleteFolderManagement == DeleteFolderManagementEnum.AskToDeleteOnExit)
             {
-                DeleteDeleteFolder deleteDeletedFolders = new(howManyDeletedFiles)
+                DeleteDeleteFolder deleteDeletedFolders = new(deletedFolderPath)
                 {
                     Owner = this
                 };
@@ -315,10 +346,14 @@ namespace Timelapse
             }
             if (deleteTheDeletedFolder)
             {
-                Directory.Delete(deletedFolderPath, true);
+                if (false == Util.FilesFolders.TryForceDeleteDirectory(deletedFolderPath))
+                {
+                    Dialogs.CouldNotDeleteFoldlerOnExitDialog(this, deletedFolderPath);
+                }
             }
         }
         #endregion
+
 
         #region Disposing
         public void Dispose()
@@ -368,6 +403,7 @@ namespace Timelapse
             e.Handled = true;
             if (e.Exception is SqlOperationException sqlEx)
             {
+                AppLog.Error("Unhandled dispatcher exception (SQLite). Shutting down.", e.Exception);
                 ExceptionShutdownDialog dialog = new(this, e.Exception, sqlEx.Result);
                 dialog.ShowDialog();
             }
@@ -377,6 +413,7 @@ namespace Timelapse
             }
             else
             {
+                AppLog.Error("Unhandled dispatcher exception. Shutting down.", e.Exception);
                 ExceptionShutdownDialog dialog = new(this, e.Exception);
                 dialog.ShowDialog();
             }
@@ -392,7 +429,7 @@ namespace Timelapse
                 // A typed SQLite failure was thrown deliberately.
                 // sqlEx.Result carries ErrorMessage, FailingStatement, and the original Exception (which includes the sqlException.Message)
                 // for inclusion in a bug-report dialog or email.
-                //Dialogs.SqlError(this, sqlEx.Message, sqlEx.Result);
+                AppLog.Error("Unhandled exception (SQLite). Shutting down.", sqlEx);
                 ExceptionShutdownDialog dialog = new(this, sqlEx);
                 dialog.ShowDialog();
                 Close();
@@ -404,6 +441,7 @@ namespace Timelapse
             }
             else
             {
+                AppLog.Error("Unhandled exception. Shutting down.", e.ExceptionObject as Exception);
                 ExceptionShutdownDialog dialog = new(this, e);
                 dialog.ShowDialog();
                 // force a shutdown. While some bugs could be recoverable, its dangerous to keep things running.
@@ -757,8 +795,7 @@ namespace Timelapse
         // Check to see if we are displaying at least one image (not in the overview), regardless of whether the ImageSetPane is active
         private bool IsDisplayingSingleImage()
         {
-            // Always false If we are in the overiew
-            if (MarkableCanvas.IsThumbnailGridVisible) return false;
+            if (MarkableCanvas.IsThumbnailGridVirtualizedVisible) return false;
 
             // True only if we are displaying at least one file in an image set
             return IsFileDatabaseAvailable() &&
@@ -767,7 +804,7 @@ namespace Timelapse
 
         private bool IsDisplayingMultipleImagesInOverview()
         {
-            return MarkableCanvas.IsThumbnailGridVisible && ImageSetPane.IsActive;
+            return MarkableCanvas.IsThumbnailGridVirtualizedVisible && ImageSetPane.IsActive;
         }
 
         private void SwitchedToThumbnailGrid()
@@ -799,24 +836,17 @@ namespace Timelapse
             }
         }
 
-        // If the DoubleClick on the ThumbnailGrid selected an image or video, display it.
-        private void ThumbnailGrid_DoubleClick(object sender, ThumbnailGridEventArgs e)
+        private void ThumbnailGridVirtualized_DoubleClick(object sender, ThumbnailGridVirtualizedEventArgs e)
         {
-            if (e.ImageRow != null && DataHandler.ImageCache.Current != null)
-            {
-                // Switch to either the video or image view as needed
-                if (DataHandler.ImageCache.Current.IsVideo && DataHandler.ImageCache.Current.IsDisplayable(RootPathToImages))
-                {
-                    MarkableCanvas.SwitchToVideoView();
-                }
-                else
-                {
-                    MarkableCanvas.SwitchToImageView();
-                }
-                FileNavigatorSlider_EnableOrDisableValueChangedCallback(false);
-                FileShow(DataHandler.FileDatabase.GetFileOrNextFileIndex(e.ImageRow.ID));
-                FileNavigatorSlider_EnableOrDisableValueChangedCallback(true);
-            }
+            if (e.ImageRow == null) return;
+            MarkableCanvas.ThumbnailGridVirtualized.Reset();
+            if (e.ImageRow.IsVideo && e.ImageRow.IsDisplayable(RootPathToImages))
+                MarkableCanvas.SwitchToVideoView();
+            else
+                MarkableCanvas.SwitchToImageView();
+            FileNavigatorSlider_EnableOrDisableValueChangedCallback(false);
+            FileShow(DataHandler.FileDatabase.GetFileOrNextFileIndex(e.ImageRow.ID));
+            FileNavigatorSlider_EnableOrDisableValueChangedCallback(true);
         }
         #endregion
 
@@ -846,10 +876,7 @@ namespace Timelapse
             }
         }
 
-        // This event handler is invoked whenever the user does a selection in the overview.
-        // It is used to refresh (and match) what rows are selected in the DataGrid. 
-        // However, because user selections can change rapidly (e.g., by dragging within the overview), we throttle the refresh using a timer 
-        private void ThumbanilGrid_SelectionChanged(object sender, ThumbnailGridEventArgs e)
+        private void ThumbnailGridVirtualized_SelectionChanged(object sender, ThumbnailGridVirtualizedEventArgs e)
         {
             DataGridSelectionsTimer_Reset();
         }
@@ -874,17 +901,12 @@ namespace Timelapse
                     int currentRowIndex = DataHandler.ImageCache.CurrentRow;
                     IdRowIndex.Add(new(DataHandler.FileDatabase.FileTable[currentRowIndex].ID, currentRowIndex));
                 }
-                else
+                else if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
                 {
-                    // multiple selections are possible in the 
                     int count = DataHandler.FileDatabase.FileTable.RowCount;
-                    foreach (int rowIndex in MarkableCanvas.ThumbnailGrid.GetSelected())
+                    foreach (int rowIndex in MarkableCanvas.ThumbnailGridVirtualized.GetSelected())
                     {
-                        if (rowIndex >= count)
-                        {
-                            // We are out of bounds!
-                            return;
-                        }
+                        if (rowIndex >= count) return;
                         IdRowIndex.Add(new(DataHandler.FileDatabase.FileTable[rowIndex].ID, rowIndex));
                     }
                 }
@@ -941,6 +963,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("HelpDocument_Drop: Unhandled exception in drag-and-drop handler.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -997,6 +1020,29 @@ namespace Timelapse
                 }
             }
             return null;
+        }
+
+        // Update the window title with the current database file path, truncated to fit the title bar.
+        internal void UpdateWindowTitle()
+        {
+            if (!IsFileDatabaseAvailable()) return;
+            Title = Defaults.MainWindowBaseTitle + " ("
+                + Util.FilesFolders.TruncateFileNameForDisplay(DataHandler.FileDatabase.FilePath, GetTitlePathCharLimit())
+                + ")";
+        }
+
+        // Estimate how many path characters fit in the title bar at the current window width.
+        // Uses the OS caption font metrics and subtracts ~190 DIPs for chrome buttons and icon.
+        // 'n' approximates the average width of path characters (letters, digits, backslashes) in Segoe UI.
+        private int GetTitlePathCharLimit()
+        {
+            var typeface = new Typeface(SystemFonts.CaptionFontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            var ft = new FormattedText("n", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                                       typeface, SystemFonts.CaptionFontSize, Brushes.Black, dpi);
+            double baseOverhead = (Defaults.MainWindowBaseTitle.Length + 4) * ft.Width; // +4 for " ()"
+            double available = Math.Max(0, ActualWidth - 190 - baseOverhead);
+            return Math.Max(30, (int)(available / ft.Width));
         }
 
         #endregion

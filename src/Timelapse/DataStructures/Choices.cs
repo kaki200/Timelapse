@@ -1,8 +1,7 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Windows.Controls;
-using Newtonsoft.Json;
 
 namespace Timelapse.DataStructures
 {
@@ -77,7 +76,7 @@ namespace Timelapse.DataStructures
             choiceText = TrimLinesAndRemoveEmptyLines(choiceText);
             List<string> choiceList = string.IsNullOrWhiteSpace(choiceText)
                 ? []
-                : choiceText.Split(NewLineDelimiter, StringSplitOptions.None).ToList();
+                : [.. choiceText.Split(NewLineDelimiter, StringSplitOptions.None)];
             ChoicesInternal = new();
             ChoiceList = choiceList;
             IncludeEmptyChoice = includeEmptyChoice;

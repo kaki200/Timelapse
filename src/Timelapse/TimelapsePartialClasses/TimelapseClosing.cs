@@ -1,5 +1,6 @@
-﻿using System.Windows;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
+using System.Windows;
+using System.Windows.Input;
 using Timelapse.Constant;
 using Timelapse.DataStructures;
 using Timelapse.Enums;
@@ -29,7 +30,11 @@ namespace Timelapse
                     CloseTimelapseAndSaveState(false);
                 }
 
-                // Dispose the image set, templateDatabase and DataHandler as they will be reset if another next image set is opened. 
+                // Stop the virtual thumbnail grid's background worker and clear its pool before
+                // disposing the data it references, to prevent stale bitmap loads after close.
+                MarkableCanvas?.ThumbnailGridVirtualized?.Reset();
+
+                // Dispose the image set, templateDatabase and DataHandler as they will be reset if another next image set is opened.
                 DataHandler.ImageCache?.Dispose();
                 DataHandler?.Dispose();
                 DataHandler = null;
@@ -56,10 +61,9 @@ namespace Timelapse
             Arguments = new(null);
 
             // Reset the rest of the user interface 
-            MarkableCanvas.ThumbnailGrid?.Reset();
             State.Reset();
             DataEntryControlPanel.IsVisible = false;
-            MarkableCanvas.ZoomOutAllTheWay();
+            if (MarkableCanvas != null) MarkableCanvas.ZoomOutAllTheWay();
             FileNavigatorSliderReset();
             EnableOrDisableMenusAndControls();
             CopyPreviousValuesButton.Visibility = Visibility.Collapsed;
@@ -72,6 +76,8 @@ namespace Timelapse
             lastControlWithFocus = null;
             QuickPasteWindowTerminate();
             ImageAdjuster?.Hide();
+            // Reset the cursor if needed
+            Mouse.OverrideCursor = null;
         }
         #endregion
 

@@ -79,7 +79,7 @@ namespace Timelapse.Images
             int toFrame = displayedVideoFrame + frameWindow;
 
             // Sort the boxes. Note that its likely that the Boxes are already sorted, so this should be fast.
-            List<BoundingBox> sortedBoxes = Boxes.OrderBy(s => s.FrameNumber).ToList();
+            List<BoundingBox> sortedBoxes = [.. Boxes.OrderBy(s => s.FrameNumber)];
 
             // Find the index of the frame containing bounding boxes that is closest to the displayedVideoFrame
             // As we do something different if its a frame before vs. after the displayed video Frame, we 
@@ -241,7 +241,7 @@ namespace Timelapse.Images
 
         // Given a bounding box, draw it atop the canvas.
         // The width, height, margin and transformGroup are used to adjust how and where the bounding box is drawn in the canvas
-        private void DoDrawBoundingBox(Canvas canvas, BoundingBox bbox, double width, double height, int margin = 0, TransformGroup transformGroup = null)
+        private static void DoDrawBoundingBox(Canvas canvas, BoundingBox bbox, double width, double height, int margin = 0, TransformGroup transformGroup = null)
         {
             // Create a bounding box 
             Rectangle rect = new();

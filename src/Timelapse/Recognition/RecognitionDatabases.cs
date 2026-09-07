@@ -4,11 +4,11 @@ using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Threading;
 using Timelapse.Constant;
 using Timelapse.Controls;
 using Timelapse.Database;
 using Timelapse.DataStructures;
+using Timelapse.Dialog;
 using Timelapse.Util;
 
 namespace Timelapse.Recognition
@@ -59,7 +59,14 @@ namespace Timelapse.Recognition
                 new(InfoColumns.ConservativeDetectionThreshold, Sql.Real, RecognizerValues.DefaultConservativeDetectionThresholdIfUnknown),
                 new(InfoColumns.TypicalClassificationThreshold, Sql.Real, RecognizerValues.DefaultTypicalClassificationThresholdIfUnknown)
             ];
-            database.CreateTable(DBTables.Info, columnDefinitions);
+            SqlOperationResult createInfoResult = database.CreateTable(DBTables.Info, columnDefinitions);
+            if (!createInfoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateRecognitionTables (Info CreateTable)", database.FilePath, createInfoResult);
+                return;
+            }
 
             // DetectionCategories
             columnDefinitions =
@@ -67,16 +74,30 @@ namespace Timelapse.Recognition
                 new(DetectionCategoriesColumns.Category, Sql.StringType + Sql.PrimaryKey), // Primary Key
                 new(DetectionCategoriesColumns.Label, Sql.StringType)
             ];
-            database.CreateTable(DBTables.DetectionCategories, columnDefinitions);
+            SqlOperationResult createDetCatResult = database.CreateTable(DBTables.DetectionCategories, columnDefinitions);
+            if (!createDetCatResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateRecognitionTables (DetectionCategories CreateTable)", database.FilePath, createDetCatResult);
+                return;
+            }
 
-            // ClassificationCategories: create or clear table 
+            // ClassificationCategories: create or clear table
             columnDefinitions =
             [
                 new(ClassificationCategoriesColumns.Category, Sql.StringType + Sql.PrimaryKey), // Primary Key
                 new(ClassificationCategoriesColumns.Label, Sql.StringType),
                 new(ClassificationCategoriesColumns.Description, Sql.StringType, string.Empty)
             ];
-            database.CreateTable(DBTables.ClassificationCategories, columnDefinitions);
+            SqlOperationResult createClassCatResult = database.CreateTable(DBTables.ClassificationCategories, columnDefinitions);
+            if (!createClassCatResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateRecognitionTables (ClassificationCategories CreateTable)", database.FilePath, createClassCatResult);
+                return;
+            }
 
             //// ClassificationCategoryDescriptions: create or clear table 
             //// The column names are identical to the ClassificationCategories table, but the table is used to store descriptions of the categories
@@ -100,7 +121,14 @@ namespace Timelapse.Recognition
                 new("FOREIGN KEY ( " + DetectionColumns.ImageID + " )",
                     "REFERENCES " + DBTables.FileData + " ( " + DetectionColumns.ImageID + " ) " + " ON DELETE CASCADE ")
             ];
-            database.CreateTable(DBTables.Detections, columnDefinitions);
+            SqlOperationResult createDetResult = database.CreateTable(DBTables.Detections, columnDefinitions);
+            if (!createDetResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateRecognitionTables (Detections CreateTable)", database.FilePath, createDetResult);
+                return;
+            }
 
             // Detections Video
             RecognitionDatabases.CreateDetectionsVideoTable(database);
@@ -114,8 +142,13 @@ namespace Timelapse.Recognition
                 new(ClassificationColumns.DetectionID, Sql.IntegerType) // Foreign key: ImageID
                 //new SchemaColumnDefinition("FOREIGN KEY ( " + ClassificationColumns.DetectionID + " )", "REFERENCES " + DBTables.Detections + " ( " + ClassificationColumns.DetectionID + " ) " + " ON DELETE CASCADE "),
             ];
-            database.CreateTable(DBTables.Classifications, columnDefinitions);
-
+            SqlOperationResult createClassResult = database.CreateTable(DBTables.Classifications, columnDefinitions);
+            if (!createClassResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateRecognitionTables (Classifications CreateTable)", database.FilePath, createClassResult);
+            }
         }
 
         // This is its own method as we also invoke it elsewhere
@@ -130,7 +163,13 @@ namespace Timelapse.Recognition
                 new("FOREIGN KEY ( " + DetectionColumns.DetectionID + " )",
                     "REFERENCES " + DBTables.Detections + " ( " + DetectionColumns.DetectionID + " ) " + " ON DELETE CASCADE ")
             ];
-            database.CreateTable(DBTables.DetectionsVideo, columnDefinitions);
+            SqlOperationResult createDetVideoResult = database.CreateTable(DBTables.DetectionsVideo, columnDefinitions);
+            if (!createDetVideoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateDetectionsVideoTable (DetectionsVideo CreateTable)", database.FilePath, createDetVideoResult);
+            }
         }
         #endregion
 
@@ -160,7 +199,13 @@ namespace Timelapse.Recognition
             }
             if (recognitionTables.Count > 0)
             {
-                database.DeleteAllRowsInTables(recognitionTables);
+                SqlOperationResult clearResult = database.DeleteAllRowsInTables(recognitionTables);
+                if (!clearResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in ClearRecognitionTables", database.FilePath, clearResult);
+                }
             }
         }
         #endregion
@@ -178,7 +223,6 @@ namespace Timelapse.Recognition
             ThrowIf.IsNullArgument(pathPrefixForTruncation, nameof(pathPrefixForTruncation));
 
             progress.Report(new(0, $"Adding {recognizer.images.Count} new recognitions. Please wait...", false, true));
-            Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
             // Updating many rows is made hugely more efficient if we create an index for File and Relative Path
             // as otherwise each update is in linear time to the table rows vs log time. 
             // Because we will not need these indexes later, we will drop them after the updates are done
@@ -203,7 +247,14 @@ namespace Timelapse.Recognition
                 new(InfoColumns.TypicalClassificationThreshold, typicalClassificationThreshold)
             ];
             List<List<ColumnTuple>> insertionStatements = [columnsToUpdate];
-            detectionDB.Insert(DBTables.Info, insertionStatements);
+            SqlOperationResult insertInfoResult = detectionDB.Insert(DBTables.Info, insertionStatements);
+            if (!insertInfoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    detectionDB.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in PopulateTables (Info)", detectionDB.FilePath, insertInfoResult);
+                return;
+            }
 
             // DetectionCategories:  Populate
             if (recognizer.detection_categories != null || recognizer.detection_categories?.Count > 0)
@@ -234,7 +285,14 @@ namespace Timelapse.Recognition
                     ];
                     insertionStatements.Insert(0, columnsToUpdate);
                 }
-                detectionDB.Insert(DBTables.DetectionCategories, insertionStatements);
+                SqlOperationResult insertDetCatResult = detectionDB.Insert(DBTables.DetectionCategories, insertionStatements);
+                if (!insertDetCatResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        detectionDB.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in PopulateTables (DetectionCategories)", detectionDB.FilePath, insertDetCatResult);
+                    return;
+                }
             }
 
             // ClassificationCategories:  Populate
@@ -261,7 +319,14 @@ namespace Timelapse.Recognition
 
                     insertionStatements.Add(columnsToUpdate);
                 }
-                detectionDB.Insert(DBTables.ClassificationCategories, insertionStatements);
+                SqlOperationResult insertClassCatResult = detectionDB.Insert(DBTables.ClassificationCategories, insertionStatements);
+                if (!insertClassCatResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        detectionDB.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in PopulateTables (ClassificationCategories)", detectionDB.FilePath, insertClassCatResult);
+                    return;
+                }
             }
 
             //// ClassificationDescriptions:  Populate
@@ -308,7 +373,6 @@ namespace Timelapse.Recognition
                     {
                         progress.Report(new(Convert.ToInt32(j * 100.0 / totalFiles),
                             $"Adding new recognitions ({j:N0}/{totalFiles:N0})...", false, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
                     }
                     j++;
 
@@ -456,8 +520,22 @@ namespace Timelapse.Recognition
                         }
                     }
                 }
-                detectionDB.Insert(DBTables.Detections, detectionInsertionStatements, progress, "Adding detections", 1000);
-                detectionDB.Insert(DBTables.DetectionsVideo, detectionVideoInsertionStatements, progress, "Adding detections for Video", 1000);
+                SqlOperationResult insertDetResult = detectionDB.Insert(DBTables.Detections, detectionInsertionStatements, progress, "Adding detections", 1000);
+                if (!insertDetResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        detectionDB.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in PopulateTables (Detections)", detectionDB.FilePath, insertDetResult);
+                    return;
+                }
+                SqlOperationResult insertDetVideoResult = detectionDB.Insert(DBTables.DetectionsVideo, detectionVideoInsertionStatements, progress, "Adding detections for Video", 1000);
+                if (!insertDetVideoResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        detectionDB.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in PopulateTables (DetectionsVideo)", detectionDB.FilePath, insertDetVideoResult);
+                    return;
+                }
                 fileDatabase.IndexCreateForDetectionsIfNeeded();
                 dataTable?.Dispose();
             }

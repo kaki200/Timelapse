@@ -1,8 +1,12 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
+using Timelapse.Constant;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace Timelapse.Util
@@ -11,14 +15,31 @@ namespace Timelapse.Util
     /// Modern notification system using native Windows-style notifications
     /// Replaces the old ToastNotifications library
     /// </summary>
-    public class ModernNotifier(Window owner)
+    public partial class ModernNotifier(Window owner)
     {
+        private Popup _currentPopup;
+
         /// <summary>
-        /// Show an information notification
+        /// Show a compact information notification by the cursor
         /// </summary>
         public void ShowInformation(string message, NotificationOptions options = null)
         {
             ShowNotification(message, NotificationType.Information, options);
+        }
+
+        /// <summary>
+        /// Show an information notification
+        /// </summary>
+        public void ShowInformationByCursor(string message)
+        {
+            ShowNotification(message, NotificationType.Information,
+                new NotificationOptions
+                {
+                    ShowCloseButton = true,
+                    CloseAfter = 3000,
+                    Compact = true,
+                    AttachToCursor = true,
+                });
         }
 
         /// <summary>
@@ -48,10 +69,16 @@ namespace Timelapse.Util
             ShowNotification(message, NotificationType.Success, options);
         }
 
+        public void Dismiss()
+        {
+            if (_currentPopup is { IsOpen: true })
+                _currentPopup.IsOpen = false;
+        }
+
         private void ShowNotification(string message, NotificationType type, NotificationOptions options = null)
         {
             options ??= new();
-            
+
             Application.Current.Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
             {
                 try
@@ -95,7 +122,7 @@ namespace Timelapse.Util
                 AllowsTransparency = true,
                 Placement = PlacementMode.Relative,
                 PlacementTarget = owner,
-                StaysOpen = false
+                StaysOpen = true   // false triggers WPF mouse capture, which swallows WM_MOUSEWHEEL
             };
 
             var border = new Border
@@ -109,7 +136,7 @@ namespace Timelapse.Util
                 Margin = options.Compact
                     ? new Thickness(2)
                     : new Thickness(20),
-                Padding = options.Compact 
+                Padding = options.Compact
                     ? new Thickness(2)
                     : new Thickness(16, 12, 16, 12),
                 //Padding = new Thickness(20),
@@ -140,11 +167,11 @@ namespace Timelapse.Util
                 Content = "X",
                 VerticalContentAlignment = VerticalAlignment.Center,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                Margin =   options.Compact              
+                Margin = options.Compact
                     ? new(4, 0, 0, 0)
                     : new(10, 0, 0, 0),
                 FontSize = 16,
-                Width = options.Compact  ? 24 : 32,
+                Width = options.Compact ? 24 : 32,
                 Height = options.Compact ? 24 : 32,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
@@ -162,9 +189,19 @@ namespace Timelapse.Util
             border.Child = stackPanel;
             popup.Child = border;
 
-            // Position notification in center of the owner window unless explicitely asked to put it on the top left
-            // The centering math here is a hack as  we don't know the size of the popup, but it works well enough for now
-            if (options.TopLeft)
+            // Position: AttachToCursor overrides all offset options.
+            if (options.AttachToCursor)
+            {
+                Point pos = GetCursorPosRelativeToOwner();
+                popup.HorizontalOffset = pos.X;
+                popup.VerticalOffset = pos.Y + 20;
+            }
+            else if (options.OffsetX.HasValue && options.OffsetY.HasValue)
+            {
+                popup.HorizontalOffset = options.OffsetX.Value;
+                popup.VerticalOffset = options.OffsetY.Value;
+            }
+            else if (options.TopLeft)
             {
                 popup.HorizontalOffset = 0;
                 popup.VerticalOffset = 0;
@@ -175,76 +212,120 @@ namespace Timelapse.Util
                 popup.VerticalOffset = owner.ActualHeight / 2.0 - 80;
             }
 
+            // Make the popup transparent to all mouse events except the close button.
+            // Returning HTTRANSPARENT from WM_NCHITTEST causes Windows to re-route every
+            // mouse message (clicks, wheel, horizontal scroll, extra buttons) to the window
+            // beneath the cursor, so nothing is swallowed by the popup's HWND.
+            popup.Opened += (_, _) =>
+            {
+                if (PresentationSource.FromVisual(popup.Child) is HwndSource hwndSource)
+                {
+                    hwndSource.AddHook((_, msg, _, lParam, ref handled) =>
+                    {
+                        const int WM_NCHITTEST = 0x0084;
+                        const int HTTRANSPARENT = -1;
+                        if (msg == WM_NCHITTEST)
+                        {
+                            if (options.ShowCloseButton)
+                            {
+                                long lp = lParam.ToInt64();
+                                int screenX = (short)(lp & 0xFFFF);
+                                int screenY = (short)((lp >> 16) & 0xFFFF);
+                                Point btnTopLeft = closeButton.PointToScreen(new Point(0, 0));
+                                var btnRect = new Rect(btnTopLeft.X, btnTopLeft.Y, closeButton.ActualWidth, closeButton.ActualHeight);
+                                if (btnRect.Contains(screenX, screenY))
+                                    return IntPtr.Zero;
+                            }
+                            handled = true;
+                            return new IntPtr(HTTRANSPARENT);
+                        }
+                        return IntPtr.Zero;
+                    });
+                }
+            };
+
+            if (_currentPopup is { IsOpen: true })
+                _currentPopup.IsOpen = false;
+            _currentPopup = popup;
             popup.IsOpen = true;
 
-            // Auto-close after specified time
-            var timer = new DispatcherTimer
+            // Track the cursor position while the popup is open.
+            if (options.AttachToCursor)
             {
-                Interval = TimeSpan.FromMilliseconds(options.CloseAfter)
-            };
-            
+                var trackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+                trackTimer.Tick += (_, _) =>
+                {
+                    if (!popup.IsOpen) { trackTimer.Stop(); return; }
+                    Point p = GetCursorPosRelativeToOwner();
+                    popup.HorizontalOffset = p.X;
+                    popup.VerticalOffset = p.Y + 20;
+                };
+                trackTimer.Start();
+                popup.Closed += (_, _) => trackTimer.Stop();
+            }
+
+            // Auto-close: wait (CloseAfter - 500ms), then fade to transparent over 500ms.
+            const int fadeDurationMs = 500;
+            int waitMs = Math.Max(0, options.CloseAfter - fadeDurationMs);
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(waitMs) };
             timer.Tick += (_, _) =>
             {
                 timer.Stop();
-                popup.IsOpen = false;
+                var fadeOut = new DoubleAnimation(1.0, 0.0, TimeSpan.FromMilliseconds(fadeDurationMs));
+                fadeOut.Completed += (_, _) => popup.IsOpen = false;
+                border.BeginAnimation(UIElement.OpacityProperty, fadeOut);
             };
-            
             timer.Start();
 
-            // Allow clicking to close, although we have a close button too
-            border.MouseLeftButtonUp += (_, _) => popup.IsOpen = false;
         }
 
-        private Brush GetBackgroundColor(NotificationType type)
+        private static SolidColorBrush GetBackgroundColor(NotificationType type)
         {
-            switch (type)
+            return type switch
             {
-                case NotificationType.Information:
-                    return new SolidColorBrush(Color.FromRgb(217, 237, 247)); // Light blue
-                case NotificationType.Success:
-                    return new SolidColorBrush(Color.FromRgb(223, 240, 216)); // Light green
-                case NotificationType.Warning:
-                    return new SolidColorBrush(Color.FromRgb(252, 248, 227)); // Light yellow
-                case NotificationType.Error:
-                    return new SolidColorBrush(Color.FromRgb(248, 215, 218)); // Light red
-                default:
-                    return new SolidColorBrush(Color.FromRgb(248, 249, 250)); // Light gray
-            }
+                NotificationType.Information => Colours.Notification.BackgroundInformation,
+                NotificationType.Success     => Colours.Notification.BackgroundSuccess,
+                NotificationType.Warning     => Colours.Notification.BackgroundWarning,
+                NotificationType.Error       => Colours.Notification.BackgroundError,
+                _                            => Colours.Notification.BackgroundNeutral
+            };
         }
 
-        private Brush GetBorderColor(NotificationType type)
+        private static SolidColorBrush GetBorderColor(NotificationType type)
         {
-            switch (type)
+            return type switch
             {
-                case NotificationType.Information:
-                    return new SolidColorBrush(Color.FromRgb(174, 213, 129)); // Blue
-                case NotificationType.Success:
-                    return new SolidColorBrush(Color.FromRgb(155, 204, 145)); // Green
-                case NotificationType.Warning:
-                    return new SolidColorBrush(Color.FromRgb(255, 193, 7)); // Yellow
-                case NotificationType.Error:
-                    return new SolidColorBrush(Color.FromRgb(220, 53, 69)); // Red
-                default:
-                    return new SolidColorBrush(Color.FromRgb(108, 117, 125)); // Gray
-            }
+                NotificationType.Information => Colours.Notification.BorderInformation,
+                NotificationType.Success     => Colours.Notification.BorderSuccess,
+                NotificationType.Warning     => Colours.Notification.BorderWarning,
+                NotificationType.Error       => Colours.Notification.BorderError,
+                _                            => Colours.Notification.BorderNeutral
+            };
         }
 
-        private Brush GetForegroundColor(NotificationType type)
+        private static SolidColorBrush GetForegroundColor(NotificationType type)
         {
-            switch (type)
+            return type switch
             {
-                case NotificationType.Information:
-                    return new SolidColorBrush(Color.FromRgb(13, 110, 180)); // Dark blue
-                case NotificationType.Success:
-                    return new SolidColorBrush(Color.FromRgb(25, 135, 84)); // Dark green
-                case NotificationType.Warning:
-                    return new SolidColorBrush(Color.FromRgb(102, 77, 3)); // Dark yellow
-                case NotificationType.Error:
-                    return new SolidColorBrush(Color.FromRgb(114, 28, 36)); // Dark red
-                default:
-                    return new SolidColorBrush(Color.FromRgb(33, 37, 41)); // Dark gray
-            }
+                NotificationType.Information => Colours.Notification.ForegroundInformation,
+                NotificationType.Success     => Colours.Notification.ForegroundSuccess,
+                NotificationType.Warning     => Colours.Notification.ForegroundWarning,
+                NotificationType.Error       => Colours.Notification.ForegroundError,
+                _                            => Colours.Notification.ForegroundNeutral
+            };
         }
+
+        private Point GetCursorPosRelativeToOwner()
+        {
+            GetCursorPos(out NativePoint p);
+            return owner.PointFromScreen(new Point(p.X, p.Y));
+        }
+
+        [LibraryImport("user32.dll")]
+        private static partial void GetCursorPos(out NativePoint pt);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativePoint { public int X, Y; }
     }
 
     public enum NotificationType
@@ -257,10 +338,13 @@ namespace Timelapse.Util
 
     public class NotificationOptions
     {
-        public int CloseAfter { get; set; } = 8000; // Default 8 seconds
+        public int CloseAfter { get; set; } = 3000; // Default 3 seconds
         public bool ShowCloseButton { get; set; } = true;
         public string Tag { get; set; } = "";
         public bool TopLeft { get; set; } = false;
-        public bool Compact { get; set; } = false;
+        public bool Compact { get; set; }
+        public double? OffsetX { get; set; } = null;
+        public double? OffsetY { get; set; } = null;
+        public bool AttachToCursor { get; set; }
     }
 }

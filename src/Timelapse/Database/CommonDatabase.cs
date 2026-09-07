@@ -5,8 +5,10 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Timelapse.Constant;
+using Timelapse.DataStructures;
 using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
+using Timelapse.Dialog;
 using Timelapse.Enums;
 using Timelapse.Recognition;
 using Timelapse.Util;
@@ -290,7 +292,15 @@ namespace Timelapse.Database
         // ASYNC and NON-ASYNC versions
         public virtual async Task LoadControlsFromTemplateDBSortedByControlOrderAsync()
         {
-            await Task.Run(LoadControlsFromTemplateDBSortedByControlOrder).ConfigureAwait(true);
+            // Run only the database read on the thread pool; constructing Controls and
+            // calling BindDataGrid (which sets DataGrid.DataContext / ItemsSource) must
+            // happen on the UI thread after ConfigureAwait(true) returns here.
+            DataTable templateTable = await Task.Run(() =>
+                Database.GetDataTableFromSelect(Sql.SelectStarFrom + DBTables.Template + Sql.OrderBy + Control.ControlOrder)
+            ).ConfigureAwait(true);
+
+            Controls = new(templateTable, row => new(row));
+            Controls.BindDataGrid(editorDataGrid, onTemplateTableRowChanged);
         }
 
         public void LoadControlsFromTemplateDBSortedByControlOrder()
@@ -505,7 +515,12 @@ namespace Timelapse.Database
                 // add the new control to the database
                 List<List<ColumnTuple>> controlInsertWrapper = [newControl.CreateColumnTuplesWithWhereByID().Columns];
                 errorReport += "controlInsertWrapper succeeded." + Environment.NewLine;
-                Database.Insert(DBTables.Template, controlInsertWrapper);
+                SqlOperationResult insertControlResult = Database.Insert(DBTables.Template, controlInsertWrapper);
+                if (!insertControlResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in AddControlToDataTableAndDatabase", this.FilePath, insertControlResult);
+                    return null;
+                }
                 errorReport += " Database.Insert succeeded." + Environment.NewLine;
 
                 // update the in memory table to reflect current database content
@@ -547,8 +562,13 @@ namespace Timelapse.Database
             long removedSpreadsheetOrder = controlToRemove.SpreadsheetOrder;
 
             // drop the control from the database and data table
-            string where = DatabaseColumn.ID + " = " + controlToRemove.ID;
-            Database.DeleteRows(DBTables.Template, where);
+            string where = DatabaseColumn.ID + Sql.Equal + controlToRemove.ID;
+            SqlOperationResult deleteControlResult = Database.DeleteRows(DBTables.Template, where);
+            if (!deleteControlResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in RemoveControlFromDataTableAndDatabase", this.FilePath, deleteControlResult);
+                return;
+            }
             LoadControlsFromTemplateDBSortedByControlOrder();
 
             // regenerate counter and spreadsheet orders; if they're greater than the one removed, decrement
@@ -572,7 +592,12 @@ namespace Timelapse.Database
                     controlUpdates.Add(new(controlUpdate, control.ID));
                 }
             }
-            Database.Update(DBTables.Template, controlUpdates);
+            SqlOperationResult updateOrderResult = Database.Update(DBTables.Template, controlUpdates);
+            if (!updateOrderResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in RemoveControlFromDataTableAndDatabase", this.FilePath, updateOrderResult);
+                return;
+            }
 
             // update the in memory table to reflect current database content
             // should not be necessary but this is done to mitigate divergence in case a bug results in the delete lacking perfect fidelity
@@ -783,13 +808,18 @@ namespace Timelapse.Database
             ColumnTuplesWithWhere ctw = dataLabel == string.Empty
                 ? control.CreateColumnTuplesWithWhereByID()
                 : new(control.CreateColumnTuplesWithWhereByID().Columns, new ColumnTuple(Control.DataLabel, dataLabel));
-            Database.Update(DBTables.Template, ctw);
+            SqlOperationResult syncResult = Database.Update(DBTables.Template, ctw);
+            if (!syncResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncControlToDatabase", this.FilePath, syncResult);
+                return;
+            }
             LoadControlsFromTemplateDBSortedByControlOrder();
         }
 
         // Update all ControlOrder and SpreadsheetOrder column entries in the template database to match their in-memory counterparts.
         // Note that this only updates those entries. If other control entries exist in the database table, they will be unaffected.  
-        private void SyncControlsToDatabase()
+        private bool SyncControlsToDatabase()
         {
             // Utilities.PrintMethodName();
             List<ColumnTuplesWithWhere> columnsTuplesWithWhereList = [];    // holds columns which have changed for the current control
@@ -802,11 +832,15 @@ namespace Timelapse.Database
                 columnTupleList.Add(new(Control.SpreadsheetOrder, control.SpreadsheetOrder));
                 columnsTuplesWithWhereList.Add(columnTupleWithWhere);
             }
-            Database.Update(DBTables.Template, columnsTuplesWithWhereList);
+            if (!Database.Update(DBTables.Template, columnsTuplesWithWhereList).Success)
+            {
+                return false;
+            }
 
             // Update the in memory table to reflect current database content
             // Perhaps not needed as the database was generated from the table, but guarantees resorts if control order has changed
             LoadControlsFromTemplateDBSortedByControlOrder();
+            return true;
         }
 
         // Populate the (empty) template database with its in-memory version
@@ -820,7 +854,12 @@ namespace Timelapse.Database
             {
                 newTableTuples.Add(control.CreateColumnTuplesWithWhereByID().Columns);
             }
-            Database.Insert(DBTables.Template, newTableTuples);
+            SqlOperationResult syncControlsResult = Database.Insert(DBTables.Template, newTableTuples);
+            if (!syncControlsResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncControlsToEmptyDatabase", this.FilePath, syncControlsResult);
+                return;
+            }
 
             // Update the in memory table to reflect current database content
             // Perhaps not needed as the database was generated from the table, but guarantees resorts if control order has changed
@@ -842,7 +881,12 @@ namespace Timelapse.Database
             {
                 newTableTuples.Add(control.CreateColumnTuplesWithWhereByID().Columns);
             }
-            Database.Insert(DBTables.MetadataTemplate, newTableTuples);
+            SqlOperationResult syncMetaResult = Database.Insert(DBTables.MetadataTemplate, newTableTuples);
+            if (!syncMetaResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncMetadataControlsToEmptyDatabase", this.FilePath, syncMetaResult);
+                return;
+            }
 
             // Update the in memory metadataControlsAll and MetadataControlsByLevel structures to reflect the just syncronized database content
             LoadMetadataControlsAndInfoFromTemplateDBSortedByControlOrder();
@@ -863,7 +907,12 @@ namespace Timelapse.Database
             {
                 newTableTuples.Add(control.CreateColumnTuplesWithWhereByID().Columns);
             }
-            Database.Insert(DBTables.MetadataInfo, newTableTuples);
+            SqlOperationResult syncMetaInfoResult = Database.Insert(DBTables.MetadataInfo, newTableTuples);
+            if (!syncMetaInfoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncMetadataInfoToEmptyDatabase", this.FilePath, syncMetaInfoResult);
+                return;
+            }
 
             // Update the in memory MetadataControlsByLevel structures to reflect the just syncronized database content
             TryLoadMetadataInfoFromTemplateDB();
@@ -873,7 +922,7 @@ namespace Timelapse.Database
         #region Controls (Editor only) - UpdateControlDisplayOrder, BindToEditorDataGrid
         // Update controls with the new order 
         // Order can be either the control order or the spreadsheet order. The Dictionary holds the new order 
-        public void UpdateControlDisplayOrder(string orderColumnName, Dictionary<string, long> newOrderByDataLabel)
+        public bool UpdateControlDisplayOrder(string orderColumnName, Dictionary<string, long> newOrderByDataLabel)
         {
             // Check the arguments for null 
             ThrowIf.IsNullArgument(newOrderByDataLabel, nameof(newOrderByDataLabel));
@@ -885,7 +934,7 @@ namespace Timelapse.Database
                     $"column '{orderColumnName}' is not a control order column.  Only '{Control.ControlOrder}' and '{Control.SpreadsheetOrder}' are order columns.");
             }
 
-            List<long> uniqueOrderValues = newOrderByDataLabel.Values.Distinct().ToList();
+            List<long> uniqueOrderValues = [.. newOrderByDataLabel.Values.Distinct()];
             if (uniqueOrderValues.Count != newOrderByDataLabel.Count)
             {
                 throw new ArgumentException(
@@ -931,7 +980,7 @@ namespace Timelapse.Database
                 }
             }
             // sync the newly ordered controls to the database,, which also reloads the controls into the controls data structure
-            SyncControlsToDatabase();
+            return SyncControlsToDatabase();
         }
 
         public void BindToEditorDataGrid(DataGrid dataGrid, DataRowChangeEventHandler onRowChanged)
@@ -973,7 +1022,11 @@ namespace Timelapse.Database
         {
             List<SchemaColumnDefinition> templateTableColumns = GetCommonSchema();
             templateTableColumns.Insert(3, new(Control.Level, Sql.IntegerType));
-            database.CreateTable(DBTables.MetadataTemplate, templateTableColumns);
+            SqlOperationResult createResult = database.CreateTable(DBTables.MetadataTemplate, templateTableColumns);
+            if (!createResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in CreateEmptyMetadataTemplateTable (MetadataTemplate CreateTable)", database.FilePath, createResult);
+            }
         }
 
 
@@ -987,7 +1040,11 @@ namespace Timelapse.Database
                 new(Control.Guid, Sql.Text),
                 new(Control.Alias, Sql.Text)
             ];
-            database.CreateTable(DBTables.MetadataInfo, metadataAliasTableColumns);
+            SqlOperationResult createResult = database.CreateTable(DBTables.MetadataInfo, metadataAliasTableColumns);
+            if (!createResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in CreateEmptyMetadataInfoTable (MetadataInfo CreateTable)", database.FilePath, createResult);
+            }
         }
 
         #endregion
@@ -1068,7 +1125,7 @@ namespace Timelapse.Database
                 return metadataControlsByLevel;
             }
             // Get the levels 
-            List<int> levels = metadataControlsAll.AsEnumerable().Select(s => s.Level).Distinct().ToList();
+            List<int> levels = [.. metadataControlsAll.AsEnumerable().Select(s => s.Level).Distinct()];
 
             // Create a new dictionary of metadatacontrols for each level, perhaps repacing the old one
             foreach (int level in levels)
@@ -1217,7 +1274,12 @@ namespace Timelapse.Database
 
             // A. Add the new control to the database
             List<List<ColumnTuple>> controlInsertWrapper = [newControl.CreateColumnTuplesWithWhereByID().Columns];
-            Database.Insert(DBTables.MetadataTemplate, controlInsertWrapper);
+            SqlOperationResult insertMetaControlResult = Database.Insert(DBTables.MetadataTemplate, controlInsertWrapper);
+            if (!insertMetaControlResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in MetadataAddControlToDataTableAndDatabase", this.FilePath, insertMetaControlResult);
+                return UpdateStateEnum.Failed;
+            }
 
             // B. Update the in memory table to reflect current database content
             // First, get the row that was just added to the Database as a datatable. This ensures its in the correct format
@@ -1227,10 +1289,9 @@ namespace Timelapse.Database
             if (justInsertedRow.Rows.Count > 0)
             {
                 MetadataControlsAll.AddRow(justInsertedRow.Rows[0]);
-                if (MetadataControlsByLevel.ContainsKey(level))
+                if (MetadataControlsByLevel.TryGetValue(level, out var value1))
                 {
-                    // Since we already have a table at that level, we just add the row
-                    MetadataControlsByLevel[level].AddRow(justInsertedRow.Rows[0]);
+                    value1.AddRow(justInsertedRow.Rows[0]);
                     return UpdateStateEnum.Modified;
                 }
 
@@ -1257,7 +1318,12 @@ namespace Timelapse.Database
             //         and update the data table and data structures
             string where = DatabaseColumn.ID + Sql.Equal + controlToRemove.ID
                            + Sql.And + Control.Level + Sql.Equal + Sql.Quote(level.ToString());
-            Database.DeleteRows(DBTables.MetadataTemplate, where);
+            SqlOperationResult deleteMetaControlResult = Database.DeleteRows(DBTables.MetadataTemplate, where);
+            if (!deleteMetaControlResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in RemoveMetadataControlFromDataTableAndDatabase", this.FilePath, deleteMetaControlResult);
+                return;
+            }
             await LoadMetadataControlsAndInfoFromTemplateTDBSortedByControlOrderAsync();
 
             // Part 2. Reread counter and spreadsheet orders; if they're greater than the one removed, decrement
@@ -1289,7 +1355,12 @@ namespace Timelapse.Database
                     controlUpdates.Add(new(controlUpdate, control.ID));
                 }
             }
-            Database.Update(DBTables.MetadataTemplate, controlUpdates);
+            SqlOperationResult updateMetaOrderResult = Database.Update(DBTables.MetadataTemplate, controlUpdates);
+            if (!updateMetaOrderResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in RemoveMetadataControlFromDataTableAndDatabase", this.FilePath, updateMetaOrderResult);
+                return;
+            }
 
             // update the in memory table to reflect current database content
             await LoadMetadataControlsAndInfoFromTemplateTDBSortedByControlOrderAsync();
@@ -1303,19 +1374,20 @@ namespace Timelapse.Database
 
             // Assumes the tables exist, as does the level before this is invoked
             // Note that because we reset the IDs back to 1 every time we go through the loop, we always want to delete Level 1
-            List<string> whereClause = [$"{Control.Level} {Sql.Equal} {level}"];
-            Database.Delete(DBTables.MetadataInfo, whereClause);
-            Database.Delete(DBTables.MetadataTemplate, whereClause);
-
-            // Update the other levels and IDs accordingly
-
-            List<string> queries =
+            // Delete the level rows and renumber remaining levels/IDs in one atomic transaction
+            List<string> allStatements =
             [
+                $"{Sql.DeleteFrom}{DBTables.MetadataInfo}{Sql.Where}{Control.Level} {Sql.Equal} {level}; ",
+                $"{Sql.DeleteFrom}{DBTables.MetadataTemplate}{Sql.Where}{Control.Level} {Sql.Equal} {level}; ",
                 $"{Sql.Update} {DBTables.MetadataInfo} {Sql.Set} {Control.Level} {Sql.Equal} {Control.Level} - 1 {Sql.Where} {Control.Level} {Sql.GreaterThan} {level}",
                 $"{Sql.Update} {DBTables.MetadataInfo} {Sql.Set} {DatabaseColumn.ID} {Sql.Equal} {DatabaseColumn.ID} - 1 {Sql.Where} {Control.Level} {Sql.GreaterThanEqual} {level}",
                 $"{Sql.Update} {DBTables.MetadataTemplate} {Sql.Set} {Control.Level} {Sql.Equal} {Control.Level} - 1 {Sql.Where} {Control.Level} {Sql.GreaterThan} {level}"
             ];
-            Database.ExecuteNonQueryWithRollback(queries);
+            SqlOperationResult deleteLevelResult = Database.ExecuteNonQueryWithRollback(allStatements);
+            if (!deleteLevelResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in MetadataDeleteLevelFromDatabase", this.FilePath, deleteLevelResult);
+            }
         }
 
         // Move the given level forward or backwards in the table
@@ -1363,7 +1435,11 @@ namespace Timelapse.Database
                 $"{Sql.Update} {DBTables.MetadataTemplate} {Sql.Set} {Control.Level} {Sql.Equal} {level + correction}  {Sql.Where} {Control.Level} {Sql.Equal} {tempLevel}"
             ];
 
-            Database.ExecuteNonQueryWithRollback(queries);
+            SqlOperationResult moveLevelResult = Database.ExecuteNonQueryWithRollback(queries);
+            if (!moveLevelResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in MetadataMoveLevelForwardsOrBackwardsInDatabase", this.FilePath, moveLevelResult);
+            }
         }
         #endregion
 
@@ -1386,7 +1462,7 @@ namespace Timelapse.Database
                     $"column '{orderColumnName}' is not a control order column.  Only '{Control.ControlOrder}' and '{Control.SpreadsheetOrder}' are order columns.");
             }
 
-            List<long> uniqueOrderValues = newOrderByDataLabel.Values.Distinct().ToList();
+            List<long> uniqueOrderValues = [.. newOrderByDataLabel.Values.Distinct()];
             if (uniqueOrderValues.Count != newOrderByDataLabel.Count)
             {
                 throw new ArgumentException(
@@ -1452,7 +1528,11 @@ namespace Timelapse.Database
 
             // Create the where condition with the ID, but if the dataLabel is not empty, use the dataLabel as the where condition
             ColumnTuplesWithWhere ctw = control.CreateColumnTuplesWithWhereByID();
-            Database.Update(DBTables.MetadataTemplate, ctw);
+            SqlOperationResult syncMetaControlResult = Database.Update(DBTables.MetadataTemplate, ctw);
+            if (!syncMetaControlResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncMetadataControlsToDatabase", this.FilePath, syncMetaControlResult);
+            }
         }
 
         // Update all ControlOrder and SpreadsheetOrder column entries for the given level in the metadatatemplate database to match their in-memory counterparts.
@@ -1475,7 +1555,12 @@ namespace Timelapse.Database
                 columnTupleList.Add(new(Control.SpreadsheetOrder, control.SpreadsheetOrder));
                 columnsTuplesWithWhereList.Add(columnTupleWithWhere);
             }
-            Database.Update(DBTables.MetadataTemplate, columnsTuplesWithWhereList);
+            SqlOperationResult syncMetaOrderResult = Database.Update(DBTables.MetadataTemplate, columnsTuplesWithWhereList);
+            if (!syncMetaOrderResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase), "The problem occurred in SyncMetadataControlsToDatabase", this.FilePath, syncMetaOrderResult);
+                return;
+            }
 
             // Update the in memory table to reflect current database content
             // Perhaps not needed as the database was generated from the table, but guarantees resorts if control order has changed
@@ -1603,9 +1688,14 @@ namespace Timelapse.Database
                 new(DatabaseColumn.BackwardsCompatibility, Sql.Text, string.Empty),
                 new(DatabaseColumn.Standard, Sql.Text, string.Empty)
             ];
-            database.CreateTable(DBTables.TemplateInfo, templateInfoColumns);
+            SqlOperationResult createResult = database.CreateTable(DBTables.TemplateInfo, templateInfoColumns);
+            if (!createResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false, "The problem occurred in CreateAndPopulateTemplateInfoTable (TemplateInfo CreateTable)", database.FilePath, createResult);
+                return;
+            }
 
-            // Add the version number of the current Timelapse program to the templateinfo table 
+            // Add the version number of the current Timelapse program to the templateinfo table
             List<List<ColumnTuple>> templateContents = [];
             List<ColumnTuple> versions =
             [
@@ -1613,7 +1703,13 @@ namespace Timelapse.Database
                 new(DatabaseColumn.BackwardsCompatibility, DatabaseValues.VersionNumberBackwardsCompatible)
             ];
             templateContents.Add(versions);
-            database.Insert(DBTables.TemplateInfo, templateContents);
+            SqlOperationResult insertTemplateInfoResult = database.Insert(DBTables.TemplateInfo, templateContents);
+            if (!insertTemplateInfoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in CreateAndPopulateTemplateInfoTable", database.FilePath, insertTemplateInfoResult);
+            }
         }
 
         public string GetTemplateVersionCompatibility()
@@ -1632,7 +1728,13 @@ namespace Timelapse.Database
 
         public void SetTemplateVersionCompatibility(string versionNumber)
         {
-            Database.SetColumnToACommonValue(DBTables.TemplateInfo, DatabaseColumn.VersionCompatibility, versionNumber);
+            SqlOperationResult setVersionResult = Database.SetColumnToACommonValue(DBTables.TemplateInfo, DatabaseColumn.VersionCompatibility, versionNumber);
+            if (!setVersionResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "SetColumnToACommonValue failed in SetTemplateVersionCompatibility", this.FilePath, setVersionResult);
+            }
         }
 
         // Return the current standard (if any) stored in the TemplateInfo table 
@@ -1652,7 +1754,13 @@ namespace Timelapse.Database
 
         public void SetTemplateStandard(string standard)
         {
-            Database.SetColumnToACommonValue(DBTables.TemplateInfo, DatabaseColumn.Standard, standard);
+            SqlOperationResult setStandardResult = Database.SetColumnToACommonValue(DBTables.TemplateInfo, DatabaseColumn.Standard, standard);
+            if (!setStandardResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "SetColumnToACommonValue failed in SetTemplateStandard", this.FilePath, setStandardResult);
+            }
         }
 
 
@@ -1676,7 +1784,13 @@ namespace Timelapse.Database
             {
                 columnTuples.Add(new(Control.Guid, guid));
             }
-            Database.UpsertRow(DBTables.MetadataInfo, primaryKeyTuple, columnTuples);
+            SqlOperationResult upsertInfoResult = Database.UpsertRow(DBTables.MetadataInfo, primaryKeyTuple, columnTuples);
+            if (!upsertInfoResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    this.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in UpsertMetadataInfoTableRow", this.FilePath, upsertInfoResult);
+            }
         }
         #endregion
 
@@ -1738,7 +1852,11 @@ namespace Timelapse.Database
             List<SchemaColumnDefinition> templateTableColumns = GetCommonSchema();
             templateTableColumns.Add(new(Control.TextBoxWidth, Sql.Text));
             templateTableColumns.Add(new(Control.Copyable, Sql.Text));
-            database.CreateTable(DBTables.Template, templateTableColumns);
+            SqlOperationResult createResult = database.CreateTable(DBTables.Template, templateTableColumns);
+            if (!createResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false, "The problem occurred in CreateEmptyTemplateTable (Template CreateTable)", database.FilePath, createResult);
+            }
         }
 
         private static List<SchemaColumnDefinition> GetCommonSchema()
@@ -1781,7 +1899,13 @@ namespace Timelapse.Database
             standardControls.Add(CreateDeleteFlagTuples(++controlOrder, ++spreadsheetOrder, true));
 
             // insert standard controls into the template table
-            database.Insert(DBTables.Template, standardControls);
+            SqlOperationResult insertStandardResult = database.Insert(DBTables.Template, standardControls);
+            if (!insertStandardResult.Success)
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                    database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                    "The problem occurred in PopulateTemplateTableWithStandardControls", database.FilePath, insertStandardResult);
+            }
         }
 
         protected static void AddExportToCSVColumnIfNeeded(SQLiteWrapper database)
@@ -1792,12 +1916,25 @@ namespace Timelapse.Database
             if (false == database.SchemaIsColumnInTable(DBTables.Template, Control.ExportToCSV))
             {
                 SchemaColumnDefinition scd = new(Control.ExportToCSV, Control.Flag, BooleanValue.True);
-                database.SchemaAddColumnToEndOfTable(DBTables.Template, scd);
+                SqlOperationResult addExportColResult = database.SchemaAddColumnToEndOfTable(DBTables.Template, scd);
+                if (!addExportColResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaAddColumnToEndOfTable failed in AddExportToCSVColumnIfNeeded", database.FilePath, addExportColResult);
+                    return;
+                }
                 ColumnTuplesWithWhere ctww = new();
 
                 ctww.Columns.Add(new(Control.ExportToCSV, BooleanValue.False));
                 ctww.SetWhere(new ColumnTuple(Control.Type, DatabaseColumn.DeleteFlag));
-                database.Update(DBTables.Template, ctww);
+                SqlOperationResult updateExportResult = database.Update(DBTables.Template, ctww);
+                if (!updateExportResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddExportToCSVColumnIfNeeded", database.FilePath, updateExportResult);
+                }
             }
         }
 
@@ -1812,13 +1949,20 @@ namespace Timelapse.Database
             if (database.SchemaIsColumnInTable(DBTables.TemplateInfo, "VersionCompatability"))
             {
                 // This error is rare and I am not sure what caused it, but the column should be called VersionCompatabily (a typo kept for backwards compatability)
-                database.SchemaRenameColumn(DBTables.TemplateInfo, "VersionCompatability", Constant.DatabaseColumn.VersionCompatibility);
+                SqlOperationResult renameVersionResult = database.SchemaRenameColumn(DBTables.TemplateInfo, "VersionCompatability", Constant.DatabaseColumn.VersionCompatibility);
+                if (!renameVersionResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaRenameColumn failed in AddTemplateInfoTableOrRowIfNeeded", database.FilePath, renameVersionResult);
+                    return;
+                }
             }
             DataTable table = database.GetDataTableFromSelect(Sql.SelectStarFrom + DBTables.TemplateInfo);
             if (table.Rows.Count == 0)
             {
                 // For some (usually backwards compatabililty reason)
-                // Add a row with the version number of the current Timelapse program to the templateinfo table 
+                // Add a row with the version number of the current Timelapse program to the templateinfo table
                 List<List<ColumnTuple>> templateContents = [];
                 List<ColumnTuple> versions =
                 [
@@ -1826,7 +1970,13 @@ namespace Timelapse.Database
                     new(DatabaseColumn.BackwardsCompatibility, DatabaseValues.VersionNumberBackwardsCompatible)
                 ];
                 templateContents.Add(versions);
-                database.Insert(DBTables.TemplateInfo, templateContents);
+                SqlOperationResult insertInfoResult = database.Insert(DBTables.TemplateInfo, templateContents);
+                if (!insertInfoResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddTemplateInfoTableOrRowIfNeeded", database.FilePath, insertInfoResult);
+                }
             }
         }
 
@@ -1838,11 +1988,24 @@ namespace Timelapse.Database
             if (false == database.SchemaIsColumnInTable(DBTables.TemplateInfo, DatabaseColumn.Standard))
             {
                 SchemaColumnDefinition scd = new(DatabaseColumn.Standard, Sql.Text, string.Empty);
-                database.SchemaAddColumnToEndOfTable(DBTables.TemplateInfo, scd);
+                SqlOperationResult addStdColResult = database.SchemaAddColumnToEndOfTable(DBTables.TemplateInfo, scd);
+                if (!addStdColResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaAddColumnToEndOfTable failed in AddStandardToTemplateInfoColumnIfNeeded", database.FilePath, addStdColResult);
+                    return;
+                }
 
                 ColumnTuplesWithWhere ctww = new();
                 ctww.Columns.Add(new(DatabaseColumn.Standard, string.Empty));
-                database.Update(DBTables.TemplateInfo, ctww);
+                SqlOperationResult updateStdResult = database.Update(DBTables.TemplateInfo, ctww);
+                if (!updateStdResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddStandardToTemplateInfoColumnIfNeeded", database.FilePath, updateStdResult);
+                }
             }
         }
 
@@ -1854,11 +2017,24 @@ namespace Timelapse.Database
             if (false == database.SchemaIsColumnInTable(DBTables.TemplateInfo, DatabaseColumn.BackwardsCompatibility))
             {
                 SchemaColumnDefinition scd = new(DatabaseColumn.BackwardsCompatibility, Sql.Text, string.Empty);
-                database.SchemaAddColumnToEndOfTable(DBTables.TemplateInfo, scd);
+                SqlOperationResult addBcColResult = database.SchemaAddColumnToEndOfTable(DBTables.TemplateInfo, scd);
+                if (!addBcColResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaAddColumnToEndOfTable failed in AddBackwardsCompatibilityToTemplateInfoColumnIfNeeded", database.FilePath, addBcColResult);
+                    return;
+                }
                 // Update the template info table with the current Backwards compatability value
                 ColumnTuplesWithWhere ctww = new();
                 ctww.Columns.Add(new(DatabaseColumn.BackwardsCompatibility, Constant.DatabaseValues.VersionNumberBackwardsCompatibleForTemplates));
-                database.Update(DBTables.TemplateInfo, ctww);
+                SqlOperationResult updateBcResult = database.Update(DBTables.TemplateInfo, ctww);
+                if (!updateBcResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddBackwardsCompatibilityToTemplateInfoColumnIfNeeded", database.FilePath, updateBcResult);
+                }
             }
         }
 
@@ -1870,11 +2046,24 @@ namespace Timelapse.Database
             if (false == database.SchemaIsColumnInTable(DBTables.ImageSet, DatabaseColumn.Standard))
             {
                 SchemaColumnDefinition scd = new(DatabaseColumn.Standard, Sql.Text, string.Empty);
-                database.SchemaAddColumnToEndOfTable(DBTables.ImageSet, scd);
+                SqlOperationResult addStdIsColResult = database.SchemaAddColumnToEndOfTable(DBTables.ImageSet, scd);
+                if (!addStdIsColResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaAddColumnToEndOfTable failed in AddStandardToImageSetColumnIfNeeded", database.FilePath, addStdIsColResult);
+                    return;
+                }
 
                 ColumnTuplesWithWhere ctww = new();
                 ctww.Columns.Add(new(DatabaseColumn.Standard, string.Empty));
-                database.Update(DBTables.ImageSet, ctww);
+                SqlOperationResult updateStdIsResult = database.Update(DBTables.ImageSet, ctww);
+                if (!updateStdIsResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddStandardToImageSetColumnIfNeeded", database.FilePath, updateStdIsResult);
+                }
             }
         }
 
@@ -1886,11 +2075,24 @@ namespace Timelapse.Database
             if (false == database.SchemaIsColumnInTable(DBTables.ImageSet, DatabaseColumn.BackwardsCompatibility))
             {
                 SchemaColumnDefinition scd = new(DatabaseColumn.BackwardsCompatibility, Sql.Text, string.Empty);
-                database.SchemaAddColumnToEndOfTable(DBTables.ImageSet, scd);
+                SqlOperationResult addBcIsColResult = database.SchemaAddColumnToEndOfTable(DBTables.ImageSet, scd);
+                if (!addBcIsColResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "SchemaAddColumnToEndOfTable failed in AddBackwardsCompatibilityToImageSetColumnIfNeeded", database.FilePath, addBcIsColResult);
+                    return;
+                }
 
                 ColumnTuplesWithWhere ctww = new();
                 ctww.Columns.Add(new(DatabaseColumn.BackwardsCompatibility, Constant.DatabaseValues.VersionNumberBackwardsCompatible));
-                database.Update(DBTables.ImageSet, ctww);
+                SqlOperationResult updateBcIsResult = database.Update(DBTables.ImageSet, ctww);
+                if (!updateBcIsResult.Success)
+                {
+                    Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow,
+                        database.FilePath?.EndsWith(".ddb", StringComparison.OrdinalIgnoreCase),
+                        "The problem occurred in AddBackwardsCompatibilityToImageSetColumnIfNeeded", database.FilePath, updateBcIsResult);
+                }
             }
         }
 

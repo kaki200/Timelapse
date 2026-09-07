@@ -1,11 +1,10 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
-using Newtonsoft.Json;
 using Timelapse.Dialog;
 using Timelapse.Util;
 using TextBox = System.Windows.Controls.TextBox;
@@ -377,8 +376,8 @@ namespace Timelapse.Standards
         private void VernacularButton_Closed(object sender, RoutedEventArgs e)
         {
             SetVernacularItemsListFromStringList(
-                TBVernacularItemsEditor.Text.Split([Environment.NewLine],
-                StringSplitOptions.None).ToList());
+                [.. TBVernacularItemsEditor.Text.Split([Environment.NewLine],
+                StringSplitOptions.None)]);
             DataGrid_Refresh();
         }
         #endregion

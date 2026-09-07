@@ -15,7 +15,7 @@ namespace Timelapse
             bool imageSetAvailable = IsFileDatabaseAvailable(); // A possible empty image set is loaded
             bool filesSelected = imageSetAvailable && DataHandler.FileDatabase.CountAllCurrentlySelectedFiles > 0; // A non-empty image set is loaded
             bool metadataLevelsExists = imageSetAvailable && DataHandler.FileDatabase.MetadataInfo is { RowCount: > 0 };
-            bool singleImageView = this.MarkableCanvas?.IsThumbnailGridVisible == false;
+            bool singleImageView = this.MarkableCanvas?.IsThumbnailGridVirtualizedVisible == false;
 
             // Depending upon whether images exist in the data set,
             // enable / disable menus and menu items as needed
@@ -38,6 +38,7 @@ namespace Timelapse
 
             MenuItemRenameFileDatabaseFile.IsEnabled = filesSelected;
             MenuItemTemplateEditor.IsEnabled = true;
+            MenuItemTemplateEditorOnCurrentFile.IsEnabled = imageSetAvailable;
             MenuFileCloseImageSet.IsEnabled = imageSetAvailable;
             MenuItemImportDetectionData.Visibility = Visibility.Visible;
             MenuItemImportDetectionData.IsEnabled = imageSetAvailable;

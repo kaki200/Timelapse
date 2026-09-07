@@ -1,4 +1,5 @@
-﻿using System;
+﻿using JetBrains.Annotations;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -7,7 +8,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Timelapse.Constant;
 using Timelapse.Controls;
 using Timelapse.DataStructures;
 using Timelapse.DebuggingSupport;
@@ -49,14 +49,25 @@ public class SQLiteWrapper
         /// Optional callback invoked when a read method catches an exception.
         /// Parameters: context (method name), failing SQL statement (may be null).
         /// Subscribers can record the failure for later reporting (e.g. via <see cref="Database.SqlErrorState"/>).
-        /// In Debug builds, <c>Debug.Fail</c> fires first; this callback is still invoked afterwards.
+        /// Subscribers can record the failure for later reporting (e.g. via <see cref="Database.SqlErrorState"/>).
         /// </summary>
         public static Action<string, SqlOperationResult> OnReadError { get; set; }
 
         // Ensures only the first SQL read error across all concurrent threads raises the dialog.
-#if !DEBUG
         private static int _errorFired;
-#endif
+
+        /// <summary>
+        /// Resets the read-error-fired guard and <see cref="SqlErrorState"/> so that new read
+        /// errors can be reported after a previous error has been acknowledged and handled.
+        /// Always call this instead of <see cref="SqlErrorState.Reset"/> alone — the two fields
+        /// must be reset together or a future read error may fire <see cref="OnReadError"/> while
+        /// <see cref="SqlErrorState"/> still holds stale data from a prior error.
+        /// </summary>
+        public static void ResetAllReadErrorState()
+        {
+            Interlocked.Exchange(ref _errorFired, 0);
+            SqlErrorState.Reset();
+        }
 
         #region Constructor
         /// <summary>
@@ -126,9 +137,9 @@ public class SQLiteWrapper
         // ReSharper disable once UnusedMember.Global
         public void IndexDropIfExists(string indexName)
         {
-            // Form: DROP INDEX IF EXISTS indexName 
+            // Form: DROP INDEX IF EXISTS indexName
             string query = Sql.DropIndex + Sql.IfExists + indexName;
-            ExecuteNonQueryWithRollback(query);
+            _ = ExecuteNonQueryWithRollback(query);
         }
 
         // Create a single index named indexName if it doesn't already exist
@@ -141,7 +152,7 @@ public class SQLiteWrapper
             }
             // Form: CREATE INDEX IF NOT EXISTS indexName ON tableName  (column1, column2...);
             string query = Sql.CreateIndex + Sql.IfNotExists + indexName + Sql.On + tableName + Sql.OpenParenthesis + columnNames + Sql.CloseParenthesis;
-            ExecuteNonQueryWithRollback(query);
+            _ = ExecuteNonQueryWithRollback(query);
         }
 
 
@@ -154,7 +165,7 @@ public class SQLiteWrapper
             {
                 queries.Add(Sql.CreateIndex + Sql.IfNotExists + tuple.Item1 + Sql.On + tuple.Item2 + Sql.OpenParenthesis + tuple.Item3 + Sql.CloseParenthesis);
             }
-            ExecuteNonQueryWithRollback(queries);
+            _ = ExecuteNonQueryWithRollback(queries);
         }
         #endregion
 
@@ -178,34 +189,53 @@ public class SQLiteWrapper
         {
             // Debug.Print("GetDataTableFromSelect: " + query);
             DataTable dataTable = new();
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                // Open the connection
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteCommand command = new(connection);
-                command.CommandText = query;
-                // Debug.Print(query);
-                using SQLiteDataReader reader = command.ExecuteReader();
-                dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
-                dataTable.Load(reader);
-                return dataTable;
-            }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in GetDataTableFromSelect: {exception.Message}\nQuery: {query}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("GetDataTableFromSelect", new SqlOperationResult
+                try
+                {
+                    // Open the connection
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteCommand command = new(connection);
+                    command.CommandText = query;
+                    // Debug.Print(query);
+                    using SQLiteDataReader reader = command.ExecuteReader();
+                    dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
+                    try   { dataTable.Load(reader); }
+                    finally { dataTable.Columns.CollectionChanged -= DataTableColumns_Changed; }
+                    if (attempt > 0)
                     {
-                        Context="GetDataTableFromSelect",
-                        ErrorMessage="SqlStatementFailure",
-                        FailingStatement=query,
-                        Exception = exception
-                    });
-#endif
-                return dataTable;
+                        AppLog.Warning($"GetDataTableFromSelect: succeeded after {attempt} retry attempt(s) due to transient database contention (busy/locked or temporarily unavailable).");
+                    }
+                    return dataTable;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in GetDataTableFromSelect (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                    && attempt < 4)
+                {
+                    // Transient lock (e.g. a competing writer on a network share) — short,
+                    // UI-safe retry budget matching ExecuteNonQueryWithRollbackCore's default
+                    // schedule. Do not extend this: this method is frequently called
+                    // synchronously from the UI thread.
+                    int delayMs = (attempt + 1) * 250;
+                    TracePrint.PrintMessage($"Database busy/locked in GetDataTableFromSelect (attempt {attempt + 1}/5), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("GetDataTableFromSelect", SqlOperationResult.Fail(
+                            $"SQL read failure in GetDataTableFromSelect: {exception.Message}", exception, query));
+                    return dataTable;
+                }
             }
         }
 
@@ -219,47 +249,68 @@ public class SQLiteWrapper
             return await Task.Run(() =>
             {
                 DataTable dataTable = new();
-                try
+                for (int attempt = 0; ; attempt++)
                 {
-                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                    connection.Open();
-                    SQLiteCommand command = new(connection);
                     try
                     {
-                        command.CommandText = query;
-                        // ReSharper disable once AccessToDisposedClosure
-                        using (token.Register(() => command.Cancel()))
+                        using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                        connection.Open();
+                        SQLiteCommand command = new(connection);
+                        try
                         {
-                            using SQLiteDataReader reader = command.ExecuteReader();
-                            dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
-                            dataTable.Load(reader);
+                            command.CommandText = query;
+                            // ReSharper disable once AccessToDisposedClosure
+                            using (token.Register(() => command.Cancel()))
+                            {
+                                using SQLiteDataReader reader = command.ExecuteReader();
+                                dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
+                                try   { dataTable.Load(reader); }
+                                finally { dataTable.Columns.CollectionChanged -= DataTableColumns_Changed; }
+                            }
                         }
-                    }
-                    finally
-                    {
-                        command.Dispose();
-                    }
-                    return dataTable;
-                }
-                catch (Exception) when (token.IsCancellationRequested)
-                {
-                    return dataTable;
-                }
-                catch (Exception exception)
-                {
-#if DEBUG
-                    Debug.Fail($"SQL read failure in GetDataTableFromSelectAsync: {exception.Message}\nQuery: {query}");
-#else
-                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                        OnReadError?.Invoke("GetDataTableFromSelectAsync", new SqlOperationResult
+                        finally
                         {
-                            Context = "GetDataTableFromSelectAsync",
-                            ErrorMessage = "SqlStatementFailure",
-                            FailingStatement = query,
-                            Exception = exception
-                        });
-#endif
-                    return dataTable;
+                            command.Dispose();
+                        }
+                        if (attempt > 0)
+                        {
+                            AppLog.Warning($"GetDataTableFromSelectAsync: succeeded after {attempt} retry attempt(s) due to transient database contention (busy/locked or temporarily unavailable).");
+                        }
+                        return dataTable;
+                    }
+                    catch (Exception) when (token.IsCancellationRequested)
+                    {
+                        return dataTable;
+                    }
+                    catch (SQLiteException sqliteEx) when (
+                        !token.IsCancellationRequested &&
+                        (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                        && attempt < 3)
+                    {
+                        int delayMs = (attempt + 1) * 200;
+                        TracePrint.PrintMessage($"Database unavailable in GetDataTableFromSelectAsync (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                        Thread.Sleep(delayMs);
+                    }
+                    catch (SQLiteException sqliteEx) when (
+                        !token.IsCancellationRequested &&
+                        (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                        && attempt < 4)
+                    {
+                        // Transient lock — short, UI-safe retry budget matching
+                        // ExecuteNonQueryWithRollbackCore's default schedule. This is the async
+                        // read path, but it's still awaited synchronously from UI code in
+                        // several callers, so the short budget applies here too.
+                        int delayMs = (attempt + 1) * 250;
+                        TracePrint.PrintMessage($"Database busy/locked in GetDataTableFromSelectAsync (attempt {attempt + 1}/5), retrying in {delayMs} ms…");
+                        Thread.Sleep(delayMs);
+                    }
+                    catch (Exception exception)
+                    {
+                        if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                            OnReadError?.Invoke("GetDataTableFromSelectAsync", SqlOperationResult.Fail(
+                                $"SQL read failure in GetDataTableFromSelectAsync: {exception.Message}", exception, query));
+                        return dataTable;
+                    }
                 }
             }, token);
         }
@@ -267,40 +318,53 @@ public class SQLiteWrapper
         public List<object> GetDistinctValuesInColumn(string tableName, string columnName)
         {
             List<object> distinctValues = [];
-#if !DEBUG
-            string lastQuery = string.Empty;
-#endif
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteCommand command = new(connection);
-                command.CommandText = String.Format(Sql.SelectDistinct + " {0} " + Sql.From + "{1}", columnName, tableName);
-#if !DEBUG
-                lastQuery = command.CommandText;
-#endif
-                using SQLiteDataReader reader = command.ExecuteReader();
-                while (reader.Read())
+                try
                 {
-                    distinctValues.Add(reader[columnName]);
-                }
-                return distinctValues;
-            }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in GetDistinctValuesInColumn (table '{tableName}', column '{columnName}'): {exception.Message}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("GetDistinctValuesInColumn", new SqlOperationResult
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteCommand command = new(connection);
+                    command.CommandText = String.Format(Sql.SelectDistinct + " {0} " + Sql.From + "{1}", columnName, tableName);
+                    using SQLiteDataReader reader = command.ExecuteReader();
+                    while (reader.Read())
                     {
-                        Context = "GetDistinctValuesInColumn",
-                        ErrorMessage = "SqlStatementFailure",
-                        FailingStatement = lastQuery,
-                        Exception = exception
-                    });
-#endif
-                return distinctValues;
+                        distinctValues.Add(reader[columnName]);
+                    }
+                    if (attempt > 0)
+                    {
+                        AppLog.Warning($"GetDistinctValuesInColumn: succeeded after {attempt} retry attempt(s) due to transient database contention (busy/locked or temporarily unavailable).");
+                    }
+                    return distinctValues;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in GetDistinctValuesInColumn (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                    && attempt < 4)
+                {
+                    // Transient lock — short, UI-safe retry budget matching
+                    // ExecuteNonQueryWithRollbackCore's default schedule. Do not extend this:
+                    // this method is frequently called synchronously from the UI thread.
+                    int delayMs = (attempt + 1) * 250;
+                    TracePrint.PrintMessage($"Database busy/locked in GetDistinctValuesInColumn (attempt {attempt + 1}/5), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("GetDistinctValuesInColumn", SqlOperationResult.Fail(
+                            $"SQL read failure in GetDistinctValuesInColumn (table '{tableName}', column '{columnName}'): {exception.Message}",
+                            exception,
+                            String.Format(Sql.SelectDistinct + " {0} " + Sql.From + "{1}", columnName, tableName)));
+                    return distinctValues;
+                }
             }
         }
 
@@ -312,32 +376,51 @@ public class SQLiteWrapper
         private object GetScalarFromSelect(string query)
         {
             // Debug.Print("Scalar: " + query);
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteCommand command = new(connection);
-                //#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities
-                command.CommandText = query;
-                //Debug.Print("Count: " + query);
-                //#pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
-                return command.ExecuteScalar();
-            }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in GetScalarFromSelect: {exception.Message}\nQuery: {query}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("GetScalarFromSelect", new SqlOperationResult
+                try
+                {
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteCommand command = new(connection);
+                    //#pragma warning disable CA2100 // Review SQL queries for security vulnerabilities
+                    command.CommandText = query;
+                    //Debug.Print("Count: " + query);
+                    //#pragma warning restore CA2100 // Review SQL queries for security vulnerabilities
+                    object scalarResult = command.ExecuteScalar();
+                    if (attempt > 0)
                     {
-                        Context = "GetScalarFromSelect",
-                        ErrorMessage = "SqlStatementFailure",
-                        FailingStatement = query,
-                        Exception = exception
-                    });
-#endif
-                return null;
+                        AppLog.Warning($"GetScalarFromSelect: succeeded after {attempt} retry attempt(s) due to transient database contention (busy/locked or temporarily unavailable).");
+                    }
+                    return scalarResult;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in GetScalarFromSelect (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                    && attempt < 4)
+                {
+                    // Transient lock — short, UI-safe retry budget matching
+                    // ExecuteNonQueryWithRollbackCore's default schedule. Do not extend this:
+                    // this method (and its Scalar* wrappers) is frequently called
+                    // synchronously from the UI thread.
+                    int delayMs = (attempt + 1) * 250;
+                    TracePrint.PrintMessage($"Database busy/locked in GetScalarFromSelect (attempt {attempt + 1}/5), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("GetScalarFromSelect", SqlOperationResult.Fail(
+                            $"SQL read failure in GetScalarFromSelect: {exception.Message}", exception, query));
+                    return null;
+                }
             }
         }
 #endregion
@@ -347,11 +430,13 @@ public class SQLiteWrapper
         // INSERT INTO table_name
         //      colname1, colname12, ... colnameN VALUES
         //      ('value1', 'value2', ... 'valueN');
+        [MustUseReturnValue]
         public SqlOperationResult Insert(string tableName, List<List<ColumnTuple>> insertionStatements)
         {
             return Insert(tableName, insertionStatements, null, string.Empty, 1000);
         }
 
+        [MustUseReturnValue]
         public SqlOperationResult Insert(string tableName, List<List<ColumnTuple>> insertionStatements, IProgress<ProgressBarArguments> progress, string progressString, int progressFrequency)
         {     // Check the arguments for null 
             ThrowIf.IsNullArgument(insertionStatements, nameof(insertionStatements));
@@ -399,6 +484,7 @@ public class SQLiteWrapper
         // As required by Sqlite upserts, The OnConflict target (i.e, the whereName) must be a Primary Key (or Unique) in the schema
         // The column names and values to update or insert are provided in the column tuples. 
         // The primaryKeyTuple must be the primary key and its value (which are used to detect conflict, and the indicate Where, and to include as name/value in the insert portion)
+        [MustUseReturnValue]
         public SqlOperationResult UpsertRow(string tableName, ColumnTuple primaryKeyTuple, List<ColumnTuple> columnTuples)
         {
             // Check the arguments for null
@@ -421,7 +507,7 @@ public class SQLiteWrapper
             query += $"{Sql.OnConflict} {Sql.OpenParenthesis} {primaryKeyTuple.Name} {Sql.CloseParenthesis} {Sql.DoUpdate} {Sql.Set}";   // On Conflict (<primaryKeyTuple.Name>) Do Update Set
             foreach (ColumnTuple ct in columnTuples)
             {
-                query += $" {ct.Name} = {Sql.Quote(ct.Value)}{Sql.Comma}";
+                query += $" {ct.Name}{Sql.Equal}{Sql.Quote(ct.Value)}{Sql.Comma}";
             }
             query = query[..^Sql.Comma.Length]; // Remove the last comma
             query += $"{Sql.Where} {primaryKeyTuple.Name} {Sql.Equal} {primaryKeyTuple.Value}";
@@ -434,6 +520,7 @@ public class SQLiteWrapper
         // Set all rows in a given table's column to a single value
         //  Form, e.g., to set all column values to foobar:
         //  -- Update tableName Set columnName = 'foobar';
+        [MustUseReturnValue]
         public SqlOperationResult SetColumnToACommonValue(string tableName, string columnName, string value)
         {
             string query = Sql.Update + tableName + Sql.Set + columnName + Sql.Equal + Sql.Quote(value);
@@ -496,9 +583,10 @@ public class SQLiteWrapper
             return ExecuteNonQueryWithRollback(queries);
         }
 
-        public SqlOperationResult Update(string tableName, List<ColumnTuplesWithWhere> updateQueryList)
+        [MustUseReturnValue]
+        public SqlOperationResult Update(string tableName, List<ColumnTuplesWithWhere> updateQueryList, int busyTimeoutMs = 0)
         {
-            // Check the arguments for null 
+            // Check the arguments for null
             ThrowIf.IsNullArgument(updateQueryList, nameof(updateQueryList));
 
             List<string> queries = [];
@@ -511,14 +599,14 @@ public class SQLiteWrapper
                 }
                 queries.Add(query);
             }
-            return ExecuteNonQueryWithRollback(queries);
+            return ExecuteNonQueryWithRollback(queries, busyTimeoutMs);
         }
 
-        /// <summary>
-        /// Update specific rows in the DB as specified in the where clause.
-        /// </summary>
-        /// <param name="tableName">The table to update.</param>
-        /// <param name="columnsToUpdate">The column names and their new values.</param>
+        // <summary>
+        // Update specific rows in the DB as specified in the where clause.
+        // </summary>
+        // <param name="tableName">The table to update.</param>
+        // <param name="columnsToUpdate">The column names and their new values.</param>
         // UPDATE table_name SET 
         // colname1 = value1, 
         // colname2 = value2,
@@ -526,25 +614,27 @@ public class SQLiteWrapper
         // colnameN = valueN
         // WHERE
         // <condition> e.g., ID=1;
-        public SqlOperationResult Update(string tableName, ColumnTuplesWithWhere columnsToUpdate)
+        [MustUseReturnValue]
+        public SqlOperationResult Update(string tableName, ColumnTuplesWithWhere columnsToUpdate, int busyTimeoutMs = 0)
         {
             // Check the arguments for null
             ThrowIf.IsNullArgument(columnsToUpdate, nameof(columnsToUpdate));
 
             string query = CreateUpdateQuery(tableName, columnsToUpdate);
-            return ExecuteNonQueryWithRollback(query);
+            return ExecuteNonQueryWithRollback(query, busyTimeoutMs);
         }
 
         // UPDATE table_name SET
         // columnname = value,
-        public SqlOperationResult Update(string tableName, ColumnTuple columnToUpdate)
+        [MustUseReturnValue]
+        public SqlOperationResult Update(string tableName, ColumnTuple columnToUpdate, int busyTimeoutMs = 0)
         {
             // Check the arguments for null
             ThrowIf.IsNullArgument(columnToUpdate, nameof(columnToUpdate));
 
             string query = Sql.Update + tableName + Sql.Set;
-            query += $" {columnToUpdate.Name} = {Sql.Quote(columnToUpdate.Value)}";
-            return ExecuteNonQueryWithRollback(query);
+            query += $" {columnToUpdate.Name}{Sql.Equal}{Sql.Quote(columnToUpdate.Value)}";
+            return ExecuteNonQueryWithRollback(query, busyTimeoutMs);
         }
 
         // Efficient update for a list of IDs
@@ -566,7 +656,8 @@ public class SQLiteWrapper
         // Crucially, the chunk boundary is based on the number of OR-joined conditions, not the
         // number of IDs — so a single BETWEEN covering 50,000 contiguous IDs still counts as
         // one condition and requires only one query.
-        public SqlOperationResult Update(string tableName, string IDColumnName, List<long> listOfIDs, string columnName, string value)
+        [MustUseReturnValue]
+        public SqlOperationResult Update(string tableName, string IDColumnName, List<long> listOfIDs, string columnName, string value, int busyTimeoutMs = 0)
         {
             if (listOfIDs.Count == 0)
             {
@@ -575,17 +666,17 @@ public class SQLiteWrapper
             }
 
             const int maxClausesPerQuery = 500;
-            List<long> sorted = listOfIDs.OrderBy(id => id).ToList();
+            List<long> sorted = [.. listOfIDs.OrderBy(id => id)];
             List<string> queries = [];
             int startIndex = 0;
             while (startIndex < sorted.Count)
             {
                 string whereClause = BuildWhereListofIds(IDColumnName, sorted, startIndex, maxClausesPerQuery, out int nextIndex);
-                queries.Add($"{Sql.Update}{tableName}{Sql.Set}{columnName} = {Sql.Quote(value)}{Sql.Where}{whereClause}");
+                queries.Add($"{Sql.Update}{tableName}{Sql.Set}{columnName}{Sql.Equal}{Sql.Quote(value)}{Sql.Where}{whereClause}");
                 startIndex = nextIndex;
             }
 
-            return ExecuteNonQueryWithRollback(queries);
+            return ExecuteNonQueryWithRollback(queries, busyTimeoutMs);
         }
 
         // Return a single update query as a string
@@ -610,11 +701,11 @@ public class SQLiteWrapper
                 // we have to cater to different formats for integers, NULLS and strings...
                 if (column.Value == null)
                 {
-                    query += $" {column.Name} = {Sql.Null}{Sql.Comma}";
+                    query += $" {column.Name}{Sql.Equal}{Sql.Null}{Sql.Comma}";
                 }
                 else
                 {
-                    query += $" {column.Name} = {Sql.Quote(column.Value)}{Sql.Comma}";
+                    query += $" {column.Name}{Sql.Equal}{Sql.Quote(column.Value)}{Sql.Comma}";
                 }
             }
             query = query[..^Sql.Comma.Length]; // Remove the last comma
@@ -634,6 +725,7 @@ public class SQLiteWrapper
         /// <summary>delete specific rows from the DB where...</summary>
         /// <param name="tableName">The table from which to delete.</param>
         /// <param name="where">The where clause for the delete.</param>
+        [MustUseReturnValue]
         public SqlOperationResult DeleteRows(string tableName, string where = "")
         {
             // DELETE FROM table_name WHERE where
@@ -652,6 +744,7 @@ public class SQLiteWrapper
         /// </summary>
         /// <param name="tableName">The table from which to delete</param>
         /// <param name="whereClauses">The where clauses for the row to delete (e.g., ID=1 ID=3 etc</param>
+        [MustUseReturnValue]
         public SqlOperationResult Delete(string tableName, List<string> whereClauses)
         {
             // Check the arguments for null
@@ -686,9 +779,10 @@ public class SQLiteWrapper
         }
 
         /// <summary>
-        /// Delete all the rows in each table in the provided list 
+        /// Delete all the rows in each table in the provided list
         /// </summary>
         /// <param name="tables"></param>
+        [MustUseReturnValue]
         public SqlOperationResult DeleteAllRowsInTables(List<string> tables)
         {
             if (tables == null || tables.Count == 0)
@@ -766,6 +860,14 @@ public class SQLiteWrapper
             return Convert.ToSingle(obj);
         }
 
+        // Return a scalar string value, or null if things go wrong. Used for e.g. PRAGMA
+        // queries (such as journal_mode) that return their value as a single text row.
+        public string ScalarGetScalarFromSelectAsString(string query)
+        {
+            object obj = GetScalarFromSelect(query);
+            return (obj == null || obj == DBNull.Value) ? null : obj.ToString();
+        }
+
         #endregion
 
         #region Execute Non-Queries (unified: single statement or list, always with rollback)
@@ -783,6 +885,7 @@ public class SQLiteWrapper
         /// <see cref="SqlOperationResult.Fail"/> carrying the error message, exception, and the
         /// failing SQL statement on failure.
         /// </returns>
+        [MustUseReturnValue]
         public SqlOperationResult ExecuteNonQueryWithRollback(string commandString, int busyTimeoutMs = 0)
         {
             if (string.IsNullOrWhiteSpace(commandString))
@@ -800,10 +903,11 @@ public class SQLiteWrapper
         /// <see cref="SqlOperationResult.Fail"/> carrying the error message, exception, and the
         /// last-executing SQL statement on failure.
         /// </returns>
-        public SqlOperationResult ExecuteNonQueryWithRollback(List<string> statements)
+        [MustUseReturnValue]
+        public SqlOperationResult ExecuteNonQueryWithRollback(List<string> statements, int busyTimeoutMs = 0)
         {
             ThrowIf.IsNullArgument(statements, nameof(statements));
-            return ExecuteNonQueryWithRollbackCore(statements);
+            return ExecuteNonQueryWithRollbackCore(statements, busyTimeoutMs: busyTimeoutMs);
         }
 
         /// <summary>
@@ -815,10 +919,11 @@ public class SQLiteWrapper
         /// <see cref="SqlOperationResult.Fail"/> carrying the error message, exception, and the
         /// last-executing SQL statement on failure.
         /// </returns>
-        public SqlOperationResult ExecuteNonQueryWithRollback(List<string> statements, IProgress<ProgressBarArguments> progress, string progressString, int progressFrequency)
+        [MustUseReturnValue]
+        public SqlOperationResult ExecuteNonQueryWithRollback(List<string> statements, IProgress<ProgressBarArguments> progress, string progressString, int progressFrequency, int busyTimeoutMs = 0)
         {
             ThrowIf.IsNullArgument(statements, nameof(statements));
-            return ExecuteNonQueryWithRollbackCore(statements, progress, progressString, progressFrequency);
+            return ExecuteNonQueryWithRollbackCore(statements, progress, progressString, progressFrequency, busyTimeoutMs);
         }
 
         /// <summary>
@@ -828,14 +933,17 @@ public class SQLiteWrapper
         /// transaction but on the same connection, such as PRAGMA foreign_keys = OFF/ON (which
         /// SQLite silently ignores when issued inside a transaction).
         /// </summary>
+        [MustUseReturnValue]
         public SqlOperationResult ExecuteNonQueryWithRollback(
             List<string> preTransactionStatements,
             List<string> statements,
-            List<string> postTransactionStatements)
+            List<string> postTransactionStatements,
+            int busyTimeoutMs = 0)
         {
             ThrowIf.IsNullArgument(statements, nameof(statements));
             return ExecuteNonQueryWithRollbackCore(
                 statements,
+                busyTimeoutMs: busyTimeoutMs,
                 preTransactionStatements: preTransactionStatements,
                 postTransactionStatements: postTransactionStatements);
         }
@@ -859,6 +967,7 @@ public class SQLiteWrapper
         /// on the still-open connection. SQLite auto-detaches any attached databases when the
         /// connection closes, so no explicit DETACH is needed on failure.
         /// </summary>
+        #pragma warning disable CA1859 // IReadOnlyList is appropriate here; SQLite I/O dwarfs any dispatch overhead
         private SqlOperationResult ExecuteNonQueryWithRollbackCore(
             IReadOnlyList<string> statements,
             IProgress<ProgressBarArguments> progress = null,
@@ -867,111 +976,156 @@ public class SQLiteWrapper
             int busyTimeoutMs = 0,
             IReadOnlyList<string> preTransactionStatements = null,
             IReadOnlyList<string> postTransactionStatements = null)
+        #pragma warning restore CA1859
         {
             if (statements == null || statements.Count == 0)
             {
                 return SqlOperationResult.Ok();
             }
-            // ReSharper disable once RedundantAssignment
-            string mostRecentStatement = null;
-            // Declared outside try so the catch block can call Rollback on the still-open connection
-            // if an exception is thrown mid-transaction.
             using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-            connection.Open();
+
+            // Retry the open for transient CANTOPEN failures (OneDrive / network-share lock).
+            // BusyTimeout cannot help here — it only applies after a successful open.
+            for (int openAttempt = 0; ; openAttempt++)
+            {
+                try { connection.Open(); break; }
+                catch (SQLiteException ex) when (ex.ResultCode == SQLiteErrorCode.CantOpen)
+                {
+                    if (openAttempt >= 4)
+                    {
+                        TracePrint.PrintMessage($"Unable to open database after 5 attempts: {ex}");
+                        return SqlOperationResult.Fail("Unable to open database file", ex);
+                    }
+                    Thread.Sleep(200);
+                }
+            }
+
             if (busyTimeoutMs > 0)
             {
                 connection.BusyTimeout = busyTimeoutMs;
             }
-            SQLiteTransaction transaction = null;
-            try
+
+            // Retry the entire transaction on transient BUSY/LOCKED — these resolve when the
+            // competing writer releases its lock. Unrecoverable failures (I/O error, drive gone)
+            // are not BUSY/LOCKED and fall straight through to the general catch.
+            // Callers that opt in with a nonzero busyTimeoutMs (background-thread writes only —
+            // see ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs) get a longer ceiling: 8
+            // attempts instead of 5, same linear-backoff formula, topping out at 1750 ms instead
+            // of 1000 ms (~7 s total instead of ~2.5 s). Do not opt in from UI-thread-synchronous
+            // call sites — this retry loop blocks whatever thread called it.
+            int maxBusyAttempt = busyTimeoutMs > 0 ? 7 : 4;
+            for (int busyAttempt = 0; ; busyAttempt++)
             {
-                // Run pre-transaction statements on the same connection before BeginTransaction.
-                // This is the only way to set pragmas like PRAGMA foreign_keys = OFF that SQLite
-                // silently ignores when issued inside a transaction.
-                if (preTransactionStatements != null)
+                // ReSharper disable once RedundantAssignment
+                string mostRecentStatement = null;
+                // Declared outside try so the catch blocks can call Rollback on the still-open connection.
+                SQLiteTransaction transaction = null;
+                try
                 {
-                    using SQLiteCommand preCmd = new(connection);
-                    foreach (string stmt in preTransactionStatements)
+                    // Run pre-transaction statements only on the first attempt.
+                    // They set connection-level state (e.g. PRAGMA foreign_keys = OFF) that
+                    // persists across retries, so repeating them is redundant.
+                    if (busyAttempt == 0 && preTransactionStatements != null)
                     {
-                        if (string.IsNullOrWhiteSpace(stmt)) continue;
-                        mostRecentStatement = stmt;
-                        preCmd.CommandText = stmt;
-                        preCmd.ExecuteNonQuery();
+                        using SQLiteCommand preCmd = new(connection);
+                        foreach (string stmt in preTransactionStatements)
+                        {
+                            if (string.IsNullOrWhiteSpace(stmt)) continue;
+                            mostRecentStatement = stmt;
+                            preCmd.CommandText = stmt;
+                            preCmd.ExecuteNonQuery();
+                        }
                     }
-                }
 
-                transaction = connection.BeginTransaction();
+                    transaction = connection.BeginTransaction();
 
-                if (progress != null)
-                {
-                    progress.Report(new(0, progressString, false, true));
-                    Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
-                }
+                    progress?.Report(new(0, progressString, false, true));
 
-                using SQLiteCommand command = new(connection);
-                command.Transaction = transaction;
-                int statementsCount = statements.Count;
-                int i = 0;
-                foreach (string statement in statements)
-                {
-                    if (progress != null && progressFrequency > 0 && i % progressFrequency == 0)
+                    using SQLiteCommand command = new(connection);
+                    command.Transaction = transaction;
+                    int statementsCount = statements.Count;
+                    int i = 0;
+                    foreach (string statement in statements)
                     {
-                        int percent = Convert.ToInt32(i * 100.0 / statementsCount);
-                        progress.Report(new(percent,
-                            $"{progressString} ({i:N0}/{statementsCount:N0})...", false, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
+                        if (progress != null && progressFrequency > 0 && i % progressFrequency == 0)
+                        {
+                            int percent = Convert.ToInt32(i * 100.0 / statementsCount);
+                            progress.Report(new(percent,
+                                $"{progressString} ({i:N0}/{statementsCount:N0})...", false, false));
+                        }
+                        // Track the current statement so it is available in the catch block.
+                        // For single-statement calls this is the statement itself; for multi-statement
+                        // transactions it is the last statement executed before the exception, which is
+                        // almost always the one that caused the failure.
+                        // ReSharper disable once RedundantAssignment
+                        mostRecentStatement = statement;
+                        command.CommandText = statement;
+                        // Note: It is more efficient to do it this way than to send
+                        // a bunch of semicolon-separated statements as a single query
+                        command.ExecuteNonQuery();
+                        i++;
                     }
-                    // Track the current statement so it is available in the catch block.
-                    // For single-statement calls this is the statement itself; for multi-statement
-                    // transactions it is the last statement executed before the exception, which is
-                    // almost always the one that caused the failure.
-                    // ReSharper disable once RedundantAssignment
-                    mostRecentStatement = statement;
-                    command.CommandText = statement;
-                    // Note: It is more efficient to do it this way than to send
-                    // a bunch of semicolon-separated statements as a single query
-                    command.ExecuteNonQuery();
-                    i++;
-                }
-                transaction.Commit();
-                transaction.Dispose();
-                // Set to null so the catch block does not attempt a rollback after a successful
-                // commit — the transaction is already closed and there is nothing to roll back.
-                transaction = null;
+                    transaction.Commit();
+                    transaction.Dispose();
+                    // Set to null so the catch block does not attempt a rollback after a successful
+                    // commit — the transaction is already closed and there is nothing to roll back.
+                    transaction = null;
 
-                // Run post-transaction statements on the same connection after the commit.
-                // Used for PRAGMA foreign_keys = ON, which is ignored inside a transaction.
-                // Failures here cannot be rolled back; the transaction has already committed.
-                if (postTransactionStatements != null)
-                {
-                    using SQLiteCommand postCmd = new(connection);
-                    foreach (string stmt in postTransactionStatements)
+                    // Run post-transaction statements on the same connection after the commit.
+                    // Used for PRAGMA foreign_keys = ON, which is ignored inside a transaction.
+                    // Failures here cannot be rolled back; the transaction has already committed.
+                    if (postTransactionStatements != null)
                     {
-                        if (string.IsNullOrWhiteSpace(stmt)) continue;
-                        mostRecentStatement = stmt;
-                        postCmd.CommandText = stmt;
-                        postCmd.ExecuteNonQuery();
+                        using SQLiteCommand postCmd = new(connection);
+                        foreach (string stmt in postTransactionStatements)
+                        {
+                            if (string.IsNullOrWhiteSpace(stmt)) continue;
+                            mostRecentStatement = stmt;
+                            postCmd.CommandText = stmt;
+                            postCmd.ExecuteNonQuery();
+                        }
                     }
-                }
 
-                return SqlOperationResult.Ok();
-            }
-            catch (Exception exception)
-            {
-                try { transaction?.Rollback(); }
-                catch { /* connection may already be broken; rollback best-effort only */ }
-                finally { transaction?.Dispose(); }
-                // Truncate only for the live-debugging log message; the full statement is
-                // preserved untruncated in SqlOperationResult.FailingStatement for bug reports.
-                string excerpt = mostRecentStatement?.Length > 500
-                    ? mostRecentStatement[..500] + "…"
-                    : mostRecentStatement ?? "(none)";
-                TracePrint.PrintMessage(
-                    $"Failure near executing statement '{excerpt}' in ExecuteNonQueryWithRollbackCore: {exception}");
-                return SqlOperationResult.Fail(
-                    $"Failure near executing statement '{excerpt}'",
-                    exception,
-                    mostRecentStatement);
+                    if (busyAttempt > 0)
+                    {
+                        AppLog.Warning($"ExecuteNonQueryWithRollbackCore: succeeded after {busyAttempt} retry attempt(s) due to transient database contention (busy/locked).");
+                    }
+                    return SqlOperationResult.Ok();
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                    && busyAttempt < maxBusyAttempt)
+                {
+                    // Transient lock — roll back and wait before retrying.
+                    // Linear backoff: 250 ms, 500 ms, ... up to 1 000 ms (5 attempts max) or, for
+                    // opted-in background callers, up to 2 000 ms (8 attempts max).
+                    try { transaction?.Rollback(); }
+                    catch
+                    {
+                        // Ignore
+                    }
+                    finally { transaction?.Dispose(); }
+                    int delayMs = (busyAttempt + 1) * 250;
+                    TracePrint.PrintMessage($"Database busy/locked (attempt {busyAttempt + 1}/{maxBusyAttempt + 1}), retrying in {delayMs} ms…");
+                }
+                catch (Exception exception)
+                {
+                    try { transaction?.Rollback(); }
+                    catch { /* connection may already be broken; rollback best-effort only */ }
+                    finally { transaction?.Dispose(); }
+                    // Truncate only for the live-debugging log message; the full statement is
+                    // preserved untruncated in SqlOperationResult.FailingStatement for bug reports.
+                    string excerpt = mostRecentStatement?.Length > 500
+                        ? mostRecentStatement[..500] + "…"
+                        : mostRecentStatement ?? "(none)";
+                    TracePrint.PrintMessage(
+                        $"Failure near executing statement '{excerpt}' in ExecuteNonQueryWithRollbackCore: {exception}");
+                    return SqlOperationResult.Fail(
+                        $"Failure near executing statement '{excerpt}'",
+                        exception,
+                        mostRecentStatement);
+                }
+                Thread.Sleep((busyAttempt + 1) * 250);
             }
         }
         #endregion
@@ -1152,25 +1306,45 @@ public class SQLiteWrapper
             }
         }
 
+        [MustUseReturnValue]
         public SqlOperationResult SchemaAlterTableWithNewColumnDefinitions(string sourceTable, List<SchemaColumnDefinition> columnDefinitions)
         {
             // A GUID suffix guarantees uniqueness regardless of the user's schema.
             string destTable = $"_TempTable_{Guid.NewGuid():N}";
             try
             {
-                // Create an empty table with the schema based on columnDefinitions
-                SqlOperationResult createResult = CreateTable(destTable, columnDefinitions);
-                if (!createResult.Success) return createResult;
-
                 using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
                 connection.Open();
 
-                // copy the contents from the source table to the destination table
-                CopyAllValuesFromTable(connection, destTable, sourceTable, destTable);
+                // Build the CREATE TABLE SQL inline so all steps share the same connection and transaction.
+                // (Calling the public CreateTable() would open a second connection, excluding that step from the transaction.)
+                string createSql = $"{Sql.CreateTable} {destTable} {Sql.OpenParenthesis} {Environment.NewLine}";
+                foreach (SchemaColumnDefinition column in columnDefinitions)
+                    createSql += $"{column} {Sql.Comma}{Environment.NewLine}";
+                createSql = createSql.Remove(createSql.Length - Sql.Comma.Length - Environment.NewLine.Length);
+                createSql += $"{Sql.CloseParenthesis} {Sql.Semicolon}";
 
-                // delete the source table, and rename the destination table so it is the same as the source table
-                DropTable(connection, sourceTable);
-                SchemaRenameTable(connection, destTable, sourceTable);
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+                try
+                {
+                    using (SQLiteCommand createCmd = new(createSql, connection))
+                        createCmd.ExecuteNonQuery();
+
+                    // copy the contents from the source table to the destination table
+                    CopyAllValuesFromTable(connection, destTable, sourceTable, destTable);
+
+                    // delete the source table, and rename the destination table so it is the same as the source table
+                    DropTable(connection, sourceTable);
+                    SchemaRenameTable(connection, destTable, sourceTable);
+
+                    transaction.Commit();
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
+                }
+
                 return SqlOperationResult.Ok();
             }
             catch (Exception exception)
@@ -1183,34 +1357,36 @@ public class SQLiteWrapper
         // Return a List of strings comprising each column in the schema
         public List<string> SchemaGetColumns(string tableName)
         {
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                // Open the connection
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteDataReader reader = GetSchema(connection, tableName);
-                List<string> columnsList = [];
-                while (reader.Read())
+                try
                 {
-                    columnsList.Add(reader[1].ToString());
-                }
-                return columnsList;
-            }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in SchemaGetColumns (table '{tableName}'): {exception.Message}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("SchemaGetColumns", new SqlOperationResult
+                    // Open the connection
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteDataReader reader = GetSchema(connection, tableName);
+                    List<string> columnsList = [];
+                    while (reader.Read())
                     {
-                        Context = "SchemaGetColumns",
-                        ErrorMessage = "SqlStatementFailure",
-                        FailingStatement = string.Empty,
-                        Exception = exception
-                    });
-#endif
-                return null;
+                        columnsList.Add(reader[1].ToString());
+                    }
+                    return columnsList;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in SchemaGetColumns (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("SchemaGetColumns", SqlOperationResult.Fail(
+                            $"SQL read failure in SchemaGetColumns (table '{tableName}'): {exception.Message}", exception));
+                    return null;
+                }
             }
         }
 
@@ -1218,62 +1394,72 @@ public class SQLiteWrapper
         // Return a dictionary comprising each column in the schema and its default values (if any)
         public Dictionary<string, string> SchemaGetColumnsAndDefaultValues(string tableName)
         {
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                // Open the connection
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteDataReader reader = GetSchema(connection, tableName);
-                Dictionary<string, string> columndefaultsDict = [];
-                while (reader.Read())
+                try
                 {
-                    columndefaultsDict.Add(reader[1].ToString() ?? string.Empty, reader[4].ToString());
-                }
-                return columndefaultsDict;
-            }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in SchemaGetColumnsAndDefaultValues (table '{tableName}'): {exception.Message}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("SchemaGetColumnsAndDefaultValues", new SqlOperationResult
+                    // Open the connection
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteDataReader reader = GetSchema(connection, tableName);
+                    Dictionary<string, string> columndefaultsDict = [];
+                    while (reader.Read())
                     {
-                        Context = "SchemaGetColumnsAndDefaultValues",
-                        ErrorMessage = "SqlStatementFailure",
-                        FailingStatement = string.Empty,
-                        Exception = exception
-                    });
-#endif
-                return null;
+                        columndefaultsDict.Add(reader[1].ToString() ?? string.Empty, reader[4].ToString());
+                    }
+                    return columndefaultsDict;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in SchemaGetColumnsAndDefaultValues (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("SchemaGetColumnsAndDefaultValues", SqlOperationResult.Fail(
+                            $"SQL read failure in SchemaGetColumnsAndDefaultValues (table '{tableName}'): {exception.Message}", exception));
+                    return null;
+                }
             }
         }
 
         public bool SchemaIsColumnInTable(string sourceTable, string currentColumnName)
         {
-#pragma warning disable CS0168 // Variable is declared but never used
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                List<string> currentColumnNames = GetSchemaColumnNamesAsList(connection, sourceTable);
-                return currentColumnNames.Contains(currentColumnName);
+                try
+                {
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    List<string> currentColumnNames = GetSchemaColumnNamesAsList(connection, sourceTable);
+                    return currentColumnNames.Contains(currentColumnName);
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.CantOpen || sqliteEx.ResultCode == SQLiteErrorCode.IoErr)
+                    && attempt < 3)
+                {
+                    int delayMs = (attempt + 1) * 200;
+                    TracePrint.PrintMessage($"Database unavailable in SchemaIsColumnInTable (attempt {attempt + 1}/4), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (Exception exception)
+                {
+                    if (Interlocked.Exchange(ref _errorFired, 1) == 0)
+                        OnReadError?.Invoke("SchemaIsColumnInTable", SqlOperationResult.Fail(
+                            $"SQL read failure in SchemaIsColumnInTable (table '{sourceTable}', column '{currentColumnName}'): {exception.Message}",
+                            exception));
+                    return false;
+                }
             }
-            catch (Exception exception)
-            {
-#if DEBUG
-                Debug.Fail($"SQL read failure in SchemaIsColumnInTable (table '{sourceTable}', column '{currentColumnName}'): {exception.Message}");
-#else
-                if (Interlocked.Exchange(ref _errorFired, 1) == 0)
-                    OnReadError?.Invoke("SchemaIsColumnInTable", null);
-#endif
-                return false;
-            }
-#pragma warning restore CS0168 // Variable is declared but never used
         }
 
         // This method will create a column in a table of type TEXT, where it is added to its end
         // It assumes that the value, if not empty, should be treated as the default value for that column
+        [MustUseReturnValue]
         public SqlOperationResult SchemaAddColumnToEndOfTable(string tableName, SchemaColumnDefinition columnDefinition)
         {
             // Check the arguments for null
@@ -1348,6 +1534,7 @@ public class SQLiteWrapper
             }
         }
 
+        [MustUseReturnValue]
         public SqlOperationResult SchemaDeleteColumn(string sourceTable, string columnName)
         {
             // Check the arguments for null
@@ -1375,19 +1562,30 @@ public class SQLiteWrapper
                 // Guarantees that the table name is unique
                 string destTable = $"{sourceTable}_NEW_{Guid.NewGuid():N}";
                 string sql = Sql.CreateTable + destTable + Sql.OpenParenthesis + newSchema + Sql.CloseParenthesis;
-                using (SQLiteCommand command = new(sql, connection))
+
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+                try
                 {
-                    command.ExecuteNonQuery();
+                    using (SQLiteCommand command = new(sql, connection))
+                        command.ExecuteNonQuery();
+
+                    // Copy the old table's contents to the new table
+                    CopyAllValuesFromTable(connection, destTable, sourceTable, destTable);
+
+                    // Now drop the source table and rename the destination table to that of the source table
+                    DropTable(connection, sourceTable);
+
+                    // Rename the table
+                    SchemaRenameTable(connection, destTable, sourceTable);
+
+                    transaction.Commit();
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
                 }
 
-                // Copy the old table's contents to the new table
-                CopyAllValuesFromTable(connection, destTable, sourceTable, destTable);
-
-                // Now drop the source table and rename the destination table to that of the source table
-                DropTable(connection, sourceTable);
-
-                // Rename the table
-                SchemaRenameTable(connection, destTable, sourceTable);
                 return SqlOperationResult.Ok();
             }
             catch (Exception exception)
@@ -1398,6 +1596,7 @@ public class SQLiteWrapper
         }
 
         // Rename a column in a table. This is just a simpler form of SchemaAlterColumn
+        [MustUseReturnValue]
         public SqlOperationResult SchemaRenameColumn(string sourceTable, string currentColumnName, string newColumnName)
         {
             Dictionary<SchemaAttributesEnum, string> attributes = new()
@@ -1409,7 +1608,8 @@ public class SQLiteWrapper
 
         // Alter the column schema
         // New attributes are given in the attributes dictionary, where the key indicates the schema field (e.g., Column name, type, NotNull, and Default) and the value is the new value for that field
-        // If a field is not specified, jsut keep the old value.  
+        // If a field is not specified, jsut keep the old value.
+        [MustUseReturnValue]
         public SqlOperationResult SchemaAlterColumn(string sourceTable, string currentColumnName, Dictionary<SchemaAttributesEnum, string> attributes)
         {
             // Pre-condition: empty column name is a programming error, not a runtime SQL failure
@@ -1447,19 +1647,30 @@ public class SQLiteWrapper
                 // Guarantees that the table name is unique
                 string destTable = $"{sourceTable}_NEW_{Guid.NewGuid():N}";
                 string sql = Sql.CreateTable + destTable + Sql.OpenParenthesis + newSchema + Sql.CloseParenthesis;
-                using (SQLiteCommand command = new(sql, connection))
+
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+                try
                 {
-                    command.ExecuteNonQuery();
+                    using (SQLiteCommand command = new(sql, connection))
+                        command.ExecuteNonQuery();
+
+                    // Copy the old table's contents to the new table
+                    CopyAllValuesBetweenTables(connection, sourceTable, destTable, sourceTable, destTable);
+
+                    // Now drop the source table and rename the destination table to that of the source table
+                    DropTable(connection, sourceTable);
+
+                    // Rename the table
+                    SchemaRenameTable(connection, destTable, sourceTable);
+
+                    transaction.Commit();
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
                 }
 
-                // Copy the old table's contents to the new table
-                CopyAllValuesBetweenTables(connection, sourceTable, destTable, sourceTable, destTable);
-
-                // Now drop the source table and rename the destination table to that of the source table
-                DropTable(connection, sourceTable);
-
-                // Rename the table
-                SchemaRenameTable(connection, destTable, sourceTable);
                 return SqlOperationResult.Ok();
             }
             catch (Exception exception)
@@ -1709,28 +1920,59 @@ public class SQLiteWrapper
         // Also note that a zero-length database file will pass this test, so you need to do a further check i.e. to see if a particular table is in the database.
         public bool PragmaGetQuickCheck()
         {
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                using DataTable dataTable = new();
-                // Open the connection
-                using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
-                connection.Open();
-                using SQLiteCommand command = new(connection);
-                command.CommandText = Sql.PragmaQuickCheck;
-                using SQLiteDataReader reader = command.ExecuteReader();
-                dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
-                dataTable.Load(reader);
-                if (dataTable.Rows.Count == 1 && String.Equals((string)dataTable.Rows[0].ItemArray[0], Sql.Ok, StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    return true;
-                }
+                    using DataTable dataTable = new();
+                    // Open the connection
+                    using SQLiteConnection connection = GetNewSqliteConnection(ConnectionString);
+                    connection.Open();
+                    using SQLiteCommand command = new(connection);
+                    command.CommandText = Sql.PragmaQuickCheck;
+                    using SQLiteDataReader reader = command.ExecuteReader();
+                    dataTable.Columns.CollectionChanged += DataTableColumns_Changed;
+                    dataTable.Load(reader);
+                    if (attempt > 0)
+                    {
+                        AppLog.Warning($"PragmaGetQuickCheck: succeeded after {attempt} retry attempt(s) due to transient database contention (busy/locked or temporarily unavailable).");
+                    }
+                    if (dataTable.Rows.Count == 1 && String.Equals((string)dataTable.Rows[0].ItemArray[0], Sql.Ok, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
 
-                return false;
-            }
-            catch
-            {
-                // this will be a System.Data.SQLite.SQLiteException
-                return false;
+                    return false;
+                }
+                catch (SQLiteException sqliteEx) when (
+                    (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                    && attempt < 4)
+                {
+                    // Transient lock — short, UI-safe retry budget matching the read-path
+                    // pattern (finding #1). Narrowly scoped to Busy/Locked only: any other
+                    // SQLiteException (e.g. genuine corruption) must fall through to the
+                    // generic catch below without retrying, so a real corrupt-file diagnosis
+                    // isn't delayed by a multi-second wait that can't possibly help it.
+                    int delayMs = (attempt + 1) * 250;
+                    TracePrint.PrintMessage($"Database busy/locked in PragmaGetQuickCheck (attempt {attempt + 1}/5), retrying in {delayMs} ms…");
+                    Thread.Sleep(delayMs);
+                }
+                catch (SQLiteException sqliteEx) when (sqliteEx.ResultCode == SQLiteErrorCode.Busy || sqliteEx.ResultCode == SQLiteErrorCode.Locked)
+                {
+                    // Retries exhausted while still transiently locked — this is contention,
+                    // not corruption. Log it as such so it's diagnosable, rather than silently
+                    // reading to the caller as "the file is corrupt."
+                    AppLog.Warning($"PragmaGetQuickCheck: database remained busy/locked after retries (not corrupt).", sqliteEx);
+                    return false;
+                }
+                catch (Exception exception)
+                {
+                    // Any other exception — including a non-Busy/Locked SQLiteException, e.g.
+                    // genuine corruption — is not retried and is logged as a real integrity
+                    // problem, not contention.
+                    AppLog.Warning("PragmaGetQuickCheck: failed (may indicate a corrupt database).", exception);
+                    return false;
+                }
             }
         }
 
@@ -1774,7 +2016,7 @@ public class SQLiteWrapper
         //       if all are contiguos, only the Between clause is used
         public static string BuildWhereListofIds(string IDColumnName, List<long> listOfIDs)
         {
-            List<long> sorted = listOfIDs.OrderBy(id => id).ToList();
+            List<long> sorted = [.. listOfIDs.OrderBy(id => id)];
             if (sorted.Count == 0)
             {
                 return string.Empty;
@@ -1809,7 +2051,7 @@ public class SQLiteWrapper
 
             if (singles.Count == 1)
             {
-                conditions.Add($"{IDColumnName} = {singles[0]}");
+                conditions.Add($"{IDColumnName}{Sql.Equal}{singles[0]}");
             }
             else if (singles.Count > 1)
             {
@@ -1841,8 +2083,8 @@ public class SQLiteWrapper
                 }
 
                 conditions.Add(rangeEnd > rangeStart
-                    ? $"{IDColumnName} BETWEEN {rangeStart} AND {rangeEnd}"
-                    : $"{IDColumnName} = {rangeStart}");
+                    ? $"{IDColumnName}{Sql.Between}{rangeStart}{Sql.And}{rangeEnd}"
+                    : $"{IDColumnName}{Sql.Equal}{rangeStart}");
                 i++;
             }
 

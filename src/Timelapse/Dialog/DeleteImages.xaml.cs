@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -392,24 +391,22 @@ namespace Timelapse.Dialog
                         int percentDone = Convert.ToInt32(fileIndex / Convert.ToDouble(count) * 100.0);
                         Progress.Report(new(percentDone,
                             $"Pass 1: Deleting {fileIndex} / {count} files", true, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);
                     }
                 }
                 Progress.Report(new(100, $"Pass 2: Updating {count} files. Please wait...", false, true));
-                Thread.Sleep(ThrottleValues.RenderingBackoffTime);
 
                 if (deleteTheData)
                 {
                     // drop images
                     fileDatabase.DeleteFilesAndMarkers(imageIDsToDropFromDatabase);
 
-                    // Vacuum the database to reclaim the space used by the deleted rows
-                    fileDatabase.Database.Vacuum();
+                    // Vacuum the database to reclaim the space used by the deleted rows; failure is survivable (space not reclaimed)
+                    _ = fileDatabase.Database.Vacuum();
                 }
                 else
                 {
                     // update image properties
-                    fileDatabase.UpdateFiles(imagesToUpdate);
+                    fileDatabase.UpdateFiles(imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
                 }
                 // A side effect of running this task is that the FileTable will be updated, which means that,
                 // at the very least, the calling function will need to run FilesSelectAndShow to either
@@ -426,7 +423,7 @@ namespace Timelapse.Dialog
         // When the user enters a listbox item, show the image
         private void Lbi_MouseEnter(object sender, MouseEventArgs e)
         {
-            if (!(sender is ListBoxItem lbi))
+            if (sender is not ListBoxItem lbi)
             {
                 return;
             }
@@ -443,7 +440,7 @@ namespace Timelapse.Dialog
         // When the user leaves a listbox item, remove the image
         private void Lbi_MouseLeave(object sender, MouseEventArgs e)
         {
-            if (!(sender is ListBoxItem lbi))
+            if (sender is not ListBoxItem lbi)
             {
                 return;
             }

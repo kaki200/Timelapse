@@ -254,19 +254,14 @@ namespace Timelapse.Images
         #region  Public Methods - Invalidate Image in cache / Reset
         public bool TryInvalidate(long id)
         {
-            if (unalteredBitmapsByID.ContainsKey(id) == false)
-            {
-                return false;
-            }
-
-            if (Current == null || Current.ID == id)
+            if (Current?.ID == id)
             {
                 Reset();
             }
 
-            unalteredBitmapsByID.TryRemove(id, out _);
             lock (mostRecentlyUsedIDs)
             {
+                unalteredBitmapsByID.TryRemove(id, out _);
                 return mostRecentlyUsedIDs.TryRemove(id);
             }
         }
@@ -375,13 +370,20 @@ namespace Timelapse.Images
                     {
                         // bitmap retrieval's already in progress, so wait for it to complete
                         prefetch.Wait();
-                        bitmap = unalteredBitmapsByID[fileRow.ID];
+                        // Use TryGetValue rather than the indexer: if the cache is at capacity a
+                        // concurrent prefetch completing for another image can evict this entry
+                        // between Wait() returning and the read, causing a KeyNotFoundException.
+                        // Fall back to a synchronous load if the entry is no longer present.
+                        if (!unalteredBitmapsByID.TryGetValue(fileRow.ID, out bitmap))
+                        {
+                            bitmap = fileRow.LoadBitmap(Database.RootPathToImages, out _);
+                        }
                         // Debug.Print("Prefetched wait" + fileRow.FileName);
                     }
                     else
                     {
                         // No cached bitmaps are available.
-                        // synchronously load the requested bitmap from disk as it isn't cached, 
+                        // synchronously load the requested bitmap from disk as it isn't cached,
                         // doesn't have a prefetch running, and is needed right now by the caller
                         bitmap = fileRow.LoadBitmap(Database.RootPathToImages, out bool isCorruptOrMissing);
                         if (isCorruptOrMissing == false)

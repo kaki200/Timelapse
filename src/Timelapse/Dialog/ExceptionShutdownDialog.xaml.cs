@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Data.SQLite;
+using System.IO;
 using System.Windows;
 using Timelapse.Database;
+using Timelapse.DebuggingSupport;
 using Timelapse.Util;
 
 namespace Timelapse.Dialog
@@ -23,7 +25,7 @@ namespace Timelapse.Dialog
         #region Constructor, Loaded
         public ExceptionShutdownDialog(Window owner, UnhandledExceptionEventArgs unhandledExceptionArgs, SqlOperationResult sqlOperatonResult = null)
         {
-            // Check the arguments for null
+            // Check the arguments for nullYes
             ThrowIf.IsNullArgument(unhandledExceptionArgs, nameof(unhandledExceptionArgs));
 
             UnhandledExceptionArgs = unhandledExceptionArgs;
@@ -69,10 +71,11 @@ namespace Timelapse.Dialog
                               $"[ni] If your data file was damaged(rare), you may be able to restore as saved version from the [i]Backup[/i] folder.";
             string separator = $"{Environment.NewLine}--------------------------{ Environment.NewLine}"
             ;
+            string version = $"v{VersionChecks.GetTimelapseCurrentVersionNumber()}";
             if (IsSqlLiteError)
             {
                 ContinueButton.Visibility = Visibility.Visible;
-                Message.DialogTitle = "Timelapse had problems with the last database request.";
+                Message.DialogTitle = $"Timelapse {version} had problems with the last database request.";
 
                 Message.Problem = "Timelapse had problems executing the last database request. Please help us fix it! ";
                 Message.Solution = emailText
@@ -83,7 +86,7 @@ namespace Timelapse.Dialog
             else
             {
                 ContinueButton.Visibility = Visibility.Collapsed;
-                Message.DialogTitle = "Timelapse needs to close. Please report this error";
+                Message.DialogTitle = $"Timelapse {version} needs to close. Please report this error";
                 Message.Problem = "Timelapse encountered a problem, likely due to a bug. Please help us fix it!";
                 Message.Solution = emailText
                                    + selectText
@@ -114,6 +117,28 @@ namespace Timelapse.Dialog
             else
             {
                 body += UnhandledExceptionArgs.ExceptionObject.ToString();
+            }
+
+            // Append up to 200 lines from the log file if it exists and is non-empty
+            string logPath = AppLog.DefaultLogFilePath;
+            if (!string.IsNullOrEmpty(logPath) && File.Exists(logPath))
+            {
+                string[] allLines = null;
+                try { allLines = File.ReadAllLines(logPath); }
+                catch { /* leave allLines null */ }
+
+                if (allLines is { Length: > 0 })
+                {
+                    const string indent = "        ";
+                    const string rule   = indent + "------------------------------";
+                    body += Environment.NewLine
+                         + rule + Environment.NewLine
+                         + indent + "Partial contents of the log file" + Environment.NewLine
+                         + rule + Environment.NewLine;
+                    int lineCount = Math.Min(allLines.Length, 200);
+                    for (int i = 0; i < lineCount; i++)
+                        body += allLines[i] + Environment.NewLine;
+                }
             }
 
             ExceptionReport.Text = body;

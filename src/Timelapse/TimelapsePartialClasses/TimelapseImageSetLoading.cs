@@ -269,34 +269,86 @@ namespace Timelapse
             // TODO: SHOULDN'T WE DO THE DEFAULT SYNCHRONIZATION IN THE PREVIOUS STEPS?
             // The next test is to test and syncronize (if needed) the default values stored in the fileDB table schema to those stored in the template
             // Only invoke this when we know the templateDBs are in sync, and the templateDB matches the FileDB (i.e., same control rows/columns) except for one or more defaults.
-            Dictionary<string, string> columndefaultdict = fileDatabase.SchemaGetColumnsAndDefaultValues(DBTables.FileData);
-            char[] quote = ['\''];
-            foreach (KeyValuePair<string, string> pair in columndefaultdict)
+            Dictionary<string, string> columndefaultdict = await Task.Run(() => fileDatabase.SchemaGetColumnsAndDefaultValues(DBTables.FileData)).ConfigureAwait(true);
+            if (columndefaultdict != null)
             {
-                ControlRow row = templateDatabase.GetControlFromControls(pair.Key);
-                if (row != null && pair.Value.Trim(quote) != row.DefaultValue)
+                char[] quote = ['\''];
+                foreach (KeyValuePair<string, string> pair in columndefaultdict)
                 {
-                    fileDatabase.UpgradeFileDBSchemaDefaultsFromTemplate();
-                    break;
+                    ControlRow row = templateDatabase.GetControlFromControls(pair.Key);
+                    if (row != null && pair.Value.Trim(quote) != row.DefaultValue)
+                    {
+                        fileDatabase.UpgradeFileDBSchemaDefaultsFromTemplate();
+                        break;
+                    }
                 }
             }
 
+            // Check: the FileData table schema must match the TemplateTable controls.
+            // Missing columns crash on display; extra columns are orphans from a different template.
+            // Note: this check is done after the template synchronization, so that any missing columns are added to the FileData table before we check for missing columns.
+            //       It does not catch the rare case when datatable has (e.g.) a flag column ColumnX, but the template redefines ColumnX as (say) an integer. This
+            //       will just set ColumnX to an integer, but with the orginal true/false values. We could add additional safeguards for this, but as its extremely rare...
+            List<string> missingColumns = fileDatabase.GetDataLabelsMissingFromFileDataTable();
+            List<string> extraColumns = fileDatabase.GetExtraColumnsInFileDataTable();
+            if (missingColumns.Count > 0 || extraColumns.Count > 0)
+            {
+                Mouse.OverrideCursor = null;
+                DatabaseSchemaMismatchResult mismatch =
+                    Dialogs.DatabaseColumnsMissingDialog(this, missingColumns, extraColumns, fileDatabase);
+
+                if (mismatch.AbortLoad)
+                    return new(false, string.Empty);
+
+                if (mismatch.UserChoseRepair)
+                {
+                    ToastNotifier.ShowInformationByCursor("Database backup in progress...");
+                    FileBackup.TryCreateBackup(fileDatabase.FilePath);
+
+                    // Apply renames first, before adds, to avoid transient name conflicts.
+                    if (mismatch.ColumnsToRename.Count > 0 &&
+                        !fileDatabase.TryRepairRenamedFileDataColumns(mismatch.ColumnsToRename))
+                    {
+                        Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(this, true,
+                            "TryRepairRenamedFileDataColumns failed in TryOpenTemplateAndBeginLoadFoldersAsync",
+                            fileDatabase.FilePath);
+                        return new(false, string.Empty);
+                    }
+                    if (mismatch.ColumnsToDelete.Count > 0 &&
+                        !fileDatabase.TryRepairExtraFileDataColumns(mismatch.ColumnsToDelete))
+                    {
+                        Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(this, true,
+                            "TryRepairExtraFileDataColumns failed in TryOpenTemplateAndBeginLoadFoldersAsync",
+                            fileDatabase.FilePath);
+                        return new(false, string.Empty);
+                    }
+                    if (mismatch.LabelsToAdd.Count > 0 &&
+                        !fileDatabase.TryRepairMissingFileDataColumns(mismatch.LabelsToAdd))
+                    {
+                        Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(this, true,
+                            "TryRepairMissingFileDataColumns failed in TryOpenTemplateAndBeginLoadFoldersAsync",
+                            fileDatabase.FilePath);
+                        return new(false, string.Empty);
+                    }
+                }
+                // else: "Continue loading" — extra-only columns ignored, safe to proceed.
+            }
+
             // Check: if there are any missing folders as specified by the relative paths, ask the user to try to locate those folders.
-            int missingFoldersCount = GetMissingFolders(fileDatabase).Count;
+            int missingFoldersCount = await Task.Run(() => GetMissingFolders(fileDatabase).Count).ConfigureAwait(true);
             if (missingFoldersCount > 0)
             {
                 Dialogs.MissingFoldersInformationDialog(this, missingFoldersCount);
             }
 
-            // Set the window's title to include the file name
-            Title = Defaults.MainWindowBaseTitle + " (" + Path.GetFileName(fileDatabase.FilePath) + ")";
+            // Set the window title with the file path, truncated to fit the current title bar width.
+            Title = Defaults.MainWindowBaseTitle + " (" + Util.FilesFolders.TruncateFileNameForDisplay(fileDatabase.FilePath, GetTitlePathCharLimit()) + ")";
 
             // Generate and render the data entry, regardless of whether there are actually any files in the files database.
             DataHandler = new(fileDatabase);
             DataEntryControls.CreateControls(fileDatabase, DataHandler);
             SetUserInterfaceCallbacks();
             MarkableCanvas.DataEntryControls = DataEntryControls; // so the markable canvas can access the controls
-            DataHandler.ThumbnailGrid = MarkableCanvas.ThumbnailGrid;
             DataHandler.MarkableCanvas = MarkableCanvas;
 
             // Initialize the MetadataDataHandler
@@ -386,12 +438,20 @@ namespace Timelapse
             {
                 if (false == TryBeginImageFolderLoad(RootPathToImages, RootPathToImages, true))
                 {
+                    if (SqlErrorState.HasError)
+                    {
+                        SQLiteWrapper.ResetAllReadErrorState();
+                    }
                     return new(false, fileDatabaseFilePath);
                 }
             }
             else
             {
                 await OnFolderLoadingCompleteAsync(false).ConfigureAwait(true);
+            }
+            if (SqlErrorState.HasError)
+            {
+                SQLiteWrapper.ResetAllReadErrorState();
             }
             return new(true, string.Empty);
         }
@@ -404,7 +464,6 @@ namespace Timelapse
         private bool TryBeginImageFolderLoad(string imageSetFolderPath, string selectedFolderPath, bool isFirstTimeLoad)
         {
             List<FileInfo> filesToAdd = [];
-            List<string> filesSkipped = [];
             bool isCancelled = false;
 
             // TODO: PUT THIS IN THE SHOW PROGRESS LOOP
@@ -449,6 +508,7 @@ namespace Timelapse
             {
                 // No images were found in the root folder or subfolders, so there is nothing to do
                 Dialogs.ImageSetLoadingNoImagesOrVideosWereFoundDialog(this, selectedFolderPath);
+                Mouse.OverrideCursor = null;
                 return false;
             }
 
@@ -490,8 +550,10 @@ namespace Timelapse
                 // If the DoWork delegate is async, this is considered finished before the actual image set is loaded.
                 // Instead of an async DoWork and an await here, wait for the loading to finish.
                 loader.LoadAsync(backgroundWorker.ReportProgress, folderLoadProgress, 500).Wait();
-                filesSkipped = loader.ImagesSkippedAsFilePathTooLong;
-                backgroundWorker.ReportProgress(0, folderLoadProgress); 
+                // Pass the skipped-files list through UserState rather than a shared captured
+                // variable, eliminating the data race between this (background) thread writing
+                // the reference and the ProgressChanged handler (UI thread) reading it.
+                backgroundWorker.ReportProgress(0, loader.ImagesSkippedAsFilePathTooLong);
             };
 
             //
@@ -502,9 +564,9 @@ namespace Timelapse
                 // this gets called on the UI thread
                 ImageSetPane.IsActive = true;
 
-                if (filesSkipped.Count > 0)
+                if (ea.UserState is List<string> { Count: > 0 } skipped)
                 {
-                    Dialogs.FilePathTooLongDialog(this, filesSkipped);
+                    Dialogs.FilePathTooLongDialog(this, skipped);
                 }
                 string message;
                 if (isCancelled)

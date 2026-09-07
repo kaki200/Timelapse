@@ -47,7 +47,7 @@ namespace Timelapse.ControlsMetadata
         #endregion
 
         #region Private Variables
-        private static FileDatabase FileDatabase => GlobalReferences.MainWindow.DataHandler.FileDatabase;
+        private static FileDatabase FileDatabase => GlobalReferences.MainWindow?.DataHandler?.FileDatabase;
         private readonly TabItem ParentTab;
         private readonly int ExpectedImageLevel;
         private string relativePathToCurrentFolder;
@@ -1406,10 +1406,7 @@ namespace Timelapse.ControlsMetadata
                 // Control's label format: 
                 Label label = VisualChildren.GetVisualChild<Label>(child);
                 // Adjust the label to that column's maximum width
-                if (label != null)
-                {
-                    label.Width = maxColumn1Width;
-                }
+                label?.Width = maxColumn1Width;
 
                 // Control's control format: 
                 UIElementCollection children = child.Children;

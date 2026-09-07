@@ -23,58 +23,39 @@ namespace Timelapse
         // By default, don't force the update
         private void FileShow(Slider fileNavigatorSlider)
         {
-            FileShow((int)fileNavigatorSlider.Value - 1, true, false);
+            FileShow((int)fileNavigatorSlider.Value - 1, false);
         }
 
         // FileShow is invoked from elsewhere than from the slider. 
         // By default, don't force the update
         public void FileShow(int fileIndex)
         {
-            FileShow(fileIndex, false, false);
+            FileShow(fileIndex, false);
         }
 
         // FileShow is invoked from elsewhere than from the slider. 
         // The argument specifies whether we should force the update
         public void FileShow(int fileIndex, bool forceUpdate)
         {
-            FileShow(fileIndex, false, forceUpdate);
+            if (false == FileShowHelperPart1(fileIndex, forceUpdate, out bool newFileToDisplay, out ImageRow imageCacheCurrent))
+            {
+                GlobalReferences.TimelapseState.IsNewSelection = false;
+                return;
+            }
+            BoundingBoxes bboxes = GetBoundingBoxesForCurrentFile(imageCacheCurrent.ID);
+            FileShowHelperPart2(imageCacheCurrent, newFileToDisplay, bboxes, fileIndex);
         }
+
         private async Task FileShowAsync(int fileIndex, bool forceUpdate)
         {
-            await FileShowAsync(fileIndex, false, forceUpdate);
-        }
-        #endregion
-
-        #region FileShow - Full Sync and Async versions
-        // Show the image / video file for the specified row, but only if its different from what is currently being displayed.
-        private void FileShow(int fileIndex, bool isInSliderNavigation, bool forceUpdate)
-        {
             if (false == FileShowHelperPart1(fileIndex, forceUpdate, out bool newFileToDisplay, out ImageRow imageCacheCurrent))
             {
-                // We clear IsNewSelections after files are shown
                 GlobalReferences.TimelapseState.IsNewSelection = false;
                 return;
             }
-            // Sync: Get the bounding boxes and markers (if any) for the current image;
-            BoundingBoxes bboxes = GetBoundingBoxesForCurrentFile(imageCacheCurrent.ID);
-            FileShowHelperPart2(imageCacheCurrent, newFileToDisplay, bboxes, fileIndex, isInSliderNavigation);
-        }
-
-        private async Task FileShowAsync(int fileIndex, bool isInSliderNavigation, bool forceUpdate)
-        {
-            if (false == FileShowHelperPart1(fileIndex, forceUpdate, out bool newFileToDisplay, out ImageRow imageCacheCurrent))
-            {
-                // We clear IsNewSelections after files are shown
-                GlobalReferences.TimelapseState.IsNewSelection = false;
-                return;
-            }
-            // Async Get the bounding boxes and markers (if any) for the current image;
             BoundingBoxes bboxes = await GetBoundingBoxesForCurrentFileAsync(imageCacheCurrent.ID);
-
-            FileShowHelperPart2(imageCacheCurrent, newFileToDisplay, bboxes, fileIndex, isInSliderNavigation);
+            FileShowHelperPart2(imageCacheCurrent, newFileToDisplay, bboxes, fileIndex);
         }
-
-        // Show the image / video file for the specified row, but only if its different from what is currently being displayed.
         #endregion
 
         #region FileShowHelper parts
@@ -95,10 +76,7 @@ namespace Timelapse
                 MarkableCanvas.SwitchToImageView();
 
                 // We could invalidate the cache here, but it will be reset anyways when images are loaded. 
-                if (DataHandler != null)
-                {
-                    DataHandler.IsProgrammaticControlUpdate = false;
-                }
+                DataHandler?.IsProgrammaticControlUpdate = false;
 
                 // We also need to do a bit of cleanup of UI elements that make no sense when there are no images to show.
                 QuickPasteWindowHide();
@@ -121,10 +99,7 @@ namespace Timelapse
             // for the bitmap caching logic below to work this should be the only place where code in TimelapseWindow moves the image enumerator
             if (DataHandler.ImageCache.TryMoveToFile(fileIndex, forceUpdate, out bool newFileToDisplayTemp) == false)
             {
-                if (DataHandler != null)
-                {
-                    DataHandler.IsProgrammaticControlUpdate = false;
-                }
+                DataHandler?.IsProgrammaticControlUpdate = false;
                 // We used to throw a new exception, but lets see what happens if we just return instead.
                 // i.e., lets just abort.
                 // throw new Exception(String.Format("in FileShow: possible problem with fileIndex value is {0}, where its not a valid row index in the image table.", fileIndex));
@@ -144,10 +119,14 @@ namespace Timelapse
                 return false;
             }
 
-            // Reset the ThumbnailGrid to the current image
-            MarkableCanvas.ThumbnailGrid.RootPathToImages = RootPathToImages;
-            MarkableCanvas.ThumbnailGrid.FileTableStartIndex = fileIndex;
-            MarkableCanvas.ThumbnailGrid.FileTable = DataHandler.FileDatabase.FileTable;
+            // Keep the virtualized grid in sync with the current file table so that
+            // RefreshDuplicateInfo and AssignPoolControls always see consistent data.
+            MarkableCanvas.ThumbnailGridVirtualized.RootPathToImages = RootPathToImages;
+            MarkableCanvas.ThumbnailGridVirtualized.FileTable = DataHandler.FileDatabase.FileTable;
+            MarkableCanvas.ThumbnailGridVirtualized.FileTableStartIndex = fileIndex;
+            // If the virtual grid is live, move its selection and scroll to the new file.
+            if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
+                MarkableCanvas.ThumbnailGridVirtualized.NavigateTo(fileIndex);
 
             // Update each control with the data for the now current image
             // This is always done as it's assumed either the image changed or that a control refresh is required due to database changes
@@ -194,7 +173,7 @@ namespace Timelapse
             FileNavigatorSlider.Value = fileIndex + 1;
             return true;
         }
-        private void FileShowHelperPart2(ImageRow imageCacheCurrent, bool newFileToDisplay, BoundingBoxes bboxes, int fileIndex, bool isInSliderNavigation)
+         private void FileShowHelperPart2(ImageRow imageCacheCurrent, bool newFileToDisplay, BoundingBoxes bboxes, int fileIndex)
         {
             markersOnCurrentFile = DataHandler.FileDatabase.MarkersGetMarkersForCurrentFile(imageCacheCurrent.ID);
             List<Marker> displayMarkers = GetDisplayMarkers();
@@ -268,9 +247,6 @@ namespace Timelapse
                 quickPasteWindow.RefreshQuickPasteWindowPreviewAsNeeded();
             }
 
-            // Refresh the markable canvas if needed
-            MarkableCanvas.RefreshIfMultipleImagesAreDisplayed(isInSliderNavigation);
-
             // Display the episode and duplicate text as needed
             DisplayEpisodeTextInImageIfWarranted(fileIndex);
             DuplicateDisplayIndicatorInImageIfWarranted();
@@ -295,22 +271,40 @@ namespace Timelapse
         private bool TryFileShowWithoutSliderCallback(DirectionEnum direction, int increment)
         {
             int desiredRow = 0;
-            // Check to see if there are any images to show, 
+            // Check to see if there are any images to show,
             if (DataHandler.FileDatabase.CountAllCurrentlySelectedFiles <= 0)
             {
                 return false;
             }
 
+            // When the virtual grid is active, navigate from the top-left file currently visible
+            // in the viewport. This keeps navigation anchored to where the user is looking,
+            // even when they have scrolled away from the last clicked thumbnail.
+            int baseRow = MarkableCanvas.IsThumbnailGridVirtualizedVisible
+                ? MarkableCanvas.ThumbnailGridVirtualized.FirstVisibleFileIndex
+                : DataHandler.ImageCache.CurrentRow;
+
+            // Explicit boundary no-ops for the virtual grid, checked against the actual scroll
+            // position rather than firstVisibleFileIndex — WPF can clamp VerticalOffset when the
+            // canvas is shorter than viewport+targetRow, which corrupts currentFirstRow and would
+            // make the baseRow check unreliable.
+            if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
+            {
+                var vg = MarkableCanvas.ThumbnailGridVirtualized;
+                if (direction == DirectionEnum.Next && vg.IsAtScrollEnd) return true;
+                if (direction == DirectionEnum.Previous && vg.IsAtScrollStart) return true;
+            }
+
             switch (direction)
             {
                 case DirectionEnum.Next:
-                    desiredRow = DataHandler.ImageCache.CurrentRow + increment;
+                    desiredRow = baseRow + increment;
                     break;
                 case DirectionEnum.Previous:
-                    desiredRow = DataHandler.ImageCache.CurrentRow - increment;
+                    desiredRow = baseRow - increment;
                     break;
                 case DirectionEnum.None:
-                    desiredRow = DataHandler.ImageCache.CurrentRow;
+                    desiredRow = baseRow;
                     break;
             }
 
@@ -324,8 +318,8 @@ namespace Timelapse
                 desiredRow = 0;
             }
 
-            // If the desired row is the same as the current row, the image is already being displayed
-            if (desiredRow != DataHandler.ImageCache.CurrentRow || direction == DirectionEnum.None)
+            // If the desired row is the same as the base, we're already at the boundary — nothing to do.
+            if (desiredRow != baseRow || direction == DirectionEnum.None)
             {
                 // Move to the desired row, forcing an update if there is no change in direction
                 FileNavigatorSlider_EnableOrDisableValueChangedCallback(false);

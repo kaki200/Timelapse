@@ -43,7 +43,7 @@ namespace Timelapse
                    DataHandler?.ImageCache?.Current != null
                 && false == File.Exists(FilesFolders.GetFullPath(DataHandler.FileDatabase, currentImage));
 
-            if (MarkableCanvas.ThumbnailGrid.IsVisible == false && MarkableCanvas.ThumbnailGrid.IsGridActive == false)
+            if (!MarkableCanvas.IsThumbnailGridVirtualizedVisible)
             {
                 MenuItemRestoreDefaults.Header = "Restore default values for this file";
                 MenuItemRestoreDefaults.ToolTip = "For the currently displayed file, revert all fields to its default values (excepting file paths and dates/times)";
@@ -483,7 +483,7 @@ namespace Timelapse
                 {
                     Source = videoRow.LoadVideoBitmap(this.RootPathToImages, null, ImageDisplayIntentEnum.Persistent, ImageDimensionEnum.UseHeight, videoPositionInSeconds, out bool isCorruptOrMissing)
                 };
-                if (isCorruptOrMissing || !(frame.Source is BitmapImage bitmapImage))
+                if (isCorruptOrMissing || frame.Source is not BitmapImage bitmapImage)
                 {
                     Dialogs.MenuEditExtractVideoFrameProblem(this, "Timelapse was unable to get it from the video file.");
                     return;
@@ -514,8 +514,9 @@ namespace Timelapse
                     Dialogs.MenuEditExtractVideoFrameProblem(this, "While Timelapse created the frame as a file, it couldn't create the data record for it");
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Error("MenuItemExtractVideoFrame: Unhandled exception during video frame extraction.", ex);
                 Dialogs.MenuEditExtractVideoFrameProblem(this, "Its not clear what went wrong. However, your data should be unchanged.");
             }
         }
@@ -545,10 +546,10 @@ namespace Timelapse
                 MenuItemDeleteFilesAndData.IsEnabled = deletedImages;
                 MenuItemDeleteFilesData.IsEnabled = deletedImages;
 
-                // Enable the delete current file option only if we are not on the thumbnail grid 
-                MenuItemDeleteCurrentFileAndData.IsEnabled = MarkableCanvas.IsThumbnailGridVisible == false; // Only show this option if the thumbnail grid is visible
-                MenuItemDeleteCurrentFile.IsEnabled = MarkableCanvas.IsThumbnailGridVisible == false && DataHandler?.ImageCache?.Current != null && DataHandler.ImageCache.Current.IsDisplayable(RootPathToImages);
-                MenuItemDeleteCurrentData.IsEnabled = MarkableCanvas.IsThumbnailGridVisible == false;
+                // Enable the delete current file option only if we are not in the overview
+                MenuItemDeleteCurrentFileAndData.IsEnabled = MarkableCanvas.IsThumbnailGridVirtualizedVisible == false;
+                MenuItemDeleteCurrentFile.IsEnabled = MarkableCanvas.IsThumbnailGridVirtualizedVisible == false && DataHandler?.ImageCache?.Current != null && DataHandler.ImageCache.Current.IsDisplayable(RootPathToImages);
+                MenuItemDeleteCurrentData.IsEnabled = MarkableCanvas.IsThumbnailGridVirtualizedVisible == false;
 
             }
             catch (Exception exception)
@@ -609,7 +610,7 @@ namespace Timelapse
                 // get list of all images marked for deletion in the current seletion
                 using (FileTable filetable = DataHandler.FileDatabase.SelectFilesMarkedForDeletion())
                 {
-                    filesToDelete = filetable.ToList();
+                    filesToDelete = [.. filetable];
                 }
 
                 for (int index = filesToDelete.Count - 1; index >= 0; index--)
@@ -1182,7 +1183,7 @@ namespace Timelapse
             // Customize the text to whether full view or overview is being displayed
             if (sender is ContextMenu menu && menu.Items[0] is MenuItem menuItem)
             {
-                if (MarkableCanvas.ThumbnailGrid.IsVisible == false && MarkableCanvas.ThumbnailGrid.IsGridActive == false)
+                if (!MarkableCanvas.IsThumbnailGridVirtualizedVisible)
                 {
                     menuItem.Header = "Restore default values for this file";
                     menuItem.ToolTip = "For the currently displayed file, revert all fields to its default values (excepting file paths and dates/times)";
@@ -1219,21 +1220,22 @@ namespace Timelapse
                     continue;
                 }
                 ControlRow imageDatabaseControl = templateDatabase.GetControlFromControls(control.DataLabel);
-                if (MarkableCanvas.ThumbnailGrid.IsVisible == false && MarkableCanvas.ThumbnailGrid.IsGridActive == false)
+                if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
                 {
-                    // Only a single image is displayed: update the database for the current row with the control's value
+                    // Virtual grid mode: update all selected thumbnails
+                    List<int> selected = MarkableCanvas.ThumbnailGridVirtualized.GetSelected();
+                    if (selected.Count > 0)
+                        await DataHandler.FileDatabase.UpdateFiles(selected, control.DataLabel, imageDatabaseControl.DefaultValue);
+                }
+                else
+                {
+                    // Single image view: update the database for the current row
                     if (DataHandler.ImageCache.Current == null)
                     {
-                        // Shouldn't happen
                         TracePrint.NullException(nameof(DataHandler.ImageCache.Current));
                         continue;
                     }
                     await DataHandler.FileDatabase.UpdateFileAsync(DataHandler.ImageCache.Current.ID, control.DataLabel, imageDatabaseControl.DefaultValue);
-                }
-                else
-                {
-                    // Multiple images are displayed: update the database for all selected rows with the control's value
-                    await DataHandler.FileDatabase.UpdateFiles(MarkableCanvas.ThumbnailGrid.GetSelected(), control.DataLabel, imageDatabaseControl.DefaultValue);
                 }
                 control.SetContentAndTooltip(imageDatabaseControl.DefaultValue);
             }

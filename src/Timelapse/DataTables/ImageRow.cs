@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 using Timelapse.Constant;
 using Timelapse.DataStructures;
@@ -456,23 +455,6 @@ namespace Timelapse.DataTables
                      imageExpectedUsage,
                      ImageDimensionEnum.UseWidth,
                      out isCorruptOrMissing);
-        }
-
-        /// <summary>
-        /// Async Wrapper for LoadBitmap
-        /// </summary>
-        /// <returns>Tuple of the BitmapSource and boolean isCorruptOrMissing output of the underlying load logic</returns>
-        public virtual Task<Tuple<BitmapSource, bool>> LoadBitmapAsync(string baseFolderPath, ImageDisplayIntentEnum imageExpectedUsage, ImageDimensionEnum imageDimension)
-        {
-            // 'out' arguments not allowed in tasks, so it returns a tuple containg the bitmap and the isCorruptOrMissingflag flag indicating bitmap retrieval state 
-            return Task.Run(() =>
-            {
-                BitmapSource bitmap = LoadBitmap(baseFolderPath, imageExpectedUsage == ImageDisplayIntentEnum.Ephemeral ? ImageValues.PreviewWidth128 : null,
-                                               imageExpectedUsage,
-                                               ImageDimensionEnum.UseWidth,
-                                               out bool isCorruptOrMissing);
-                return Tuple.Create(bitmap, isCorruptOrMissing);
-            });
         }
 
         // Load: Full form

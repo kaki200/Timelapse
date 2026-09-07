@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,7 +9,9 @@ using System.Windows.Input;
 using Timelapse;
 using Timelapse.Constant;
 using Timelapse.Database;
+using Timelapse.DataStructures;
 using Timelapse.DataTables;
+using Timelapse.DebuggingSupport;
 using Timelapse.Dialog;
 using Timelapse.Enums;
 using Timelapse.Extensions;
@@ -42,8 +45,8 @@ namespace TimelapseTemplateEditor
             templateDatabase.BindToEditorDataGrid(TemplateUI.TemplateDataGridControl.DataGridInstance, Globals.TemplateDataGridControl.TemplateDataGrid_RowChanged);
 
             // Update the user interface specified by the contents of the table
-            Globals.TemplateDataEntryPreviewPanelControl.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls);
-            Globals.TemplateSpreadsheet.GenerateSpreadsheet();
+            Controls.TemplateDataEntryPreviewPanel.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls);
+            Controls.TemplateSpreadsheetPreviewControl.GenerateSpreadsheet();
 
             // Enable/disable the various UI elements as needed, including the Add row buttons
             State.RecentlyOpenedTemplateFiles.SetMostRecent(templateDatabaseFilePath);
@@ -62,6 +65,8 @@ namespace TimelapseTemplateEditor
                 Dialogs.TemplatePathTooLongDialog(this, templateFilePath);
                 return;
             }
+
+            AppLog.Initialize(Path.GetDirectoryName(templateFilePath));
 
             // Initialize the data grid from the template
             if (false == await TemplateInitializeFromDBFileAsync(templateFilePath).ConfigureAwait(true))
@@ -131,8 +136,14 @@ namespace TimelapseTemplateEditor
             dataGrid.DataContext = Globals.TemplateDatabase.Controls;
 
             // Update the previews to reflect the added row
-            Globals.TemplateSpreadsheet.GenerateSpreadsheet();
-            TemplateDoUpdateControlOrder();
+            Controls.TemplateSpreadsheetPreviewControl.GenerateSpreadsheet();
+            if (!TemplateDoUpdateControlOrder())
+            {
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false,
+                    "TemplateDoAddNewRow: Timelapse could not save the new control order to your template file.",
+                    Globals.TemplateDatabase?.FilePath);
+                return;
+            }
 
             // Scroll the last element of the datagrid into view (as we are adding something at the end)
             dataGrid.ScrollIntoViewLastRow();
@@ -167,13 +178,13 @@ namespace TimelapseTemplateEditor
                 templateDatabase.RemoveControlFromDataTableAndDatabase(new(selectedRowView.Row));
 
                 // Update the view so it reflects the current values in the database
-                Globals.TemplateDataEntryPreviewPanelControl.GeneratePreviewControls(Globals.TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, Globals.TemplateDatabase.Controls);
-                Globals.TemplateSpreadsheet.GenerateSpreadsheet();
+                Controls.TemplateDataEntryPreviewPanel.GeneratePreviewControls(Globals.TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, Globals.TemplateDatabase.Controls);
+                Controls.TemplateSpreadsheetPreviewControl.GenerateSpreadsheet();
                 dataGridBeingUpdatedByCode = false;
             }
         }
         
-        public void TemplateDoUpdateControlOrder()
+        public bool TemplateDoUpdateControlOrder()
         {
             Dictionary<string, long> newControlOrderByDataLabel = [];
             long controlOrder = 1;
@@ -187,9 +198,10 @@ namespace TimelapseTemplateEditor
                 controlOrder++;
             }
             dataGridBeingUpdatedByCode = true;
-            templateDatabase.UpdateControlDisplayOrder(Control.ControlOrder, newControlOrderByDataLabel);
+            bool success = templateDatabase.UpdateControlDisplayOrder(Control.ControlOrder, newControlOrderByDataLabel);
             dataGridBeingUpdatedByCode = false;
-            Globals.TemplateDataEntryPreviewPanelControl.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls); // Ensures that the controls panel updates itself
+            Controls.TemplateDataEntryPreviewPanel.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls); // Ensures that the controls panel updates itself
+            return success;
         }
         #endregion
 
@@ -199,8 +211,8 @@ namespace TimelapseTemplateEditor
         {
             dataGridBeingUpdatedByCode = true;
             templateDatabase.SyncControlToDatabase(control);
-            Globals.TemplateDataEntryPreviewPanelControl.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls);
-            Globals.TemplateSpreadsheet.GenerateSpreadsheet();
+            Controls.TemplateDataEntryPreviewPanel.GeneratePreviewControls(TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, templateDatabase.Controls);
+            Controls.TemplateSpreadsheetPreviewControl.GenerateSpreadsheet();
             dataGridBeingUpdatedByCode = false;
         }
 

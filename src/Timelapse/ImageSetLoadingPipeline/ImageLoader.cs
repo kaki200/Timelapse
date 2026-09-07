@@ -34,15 +34,11 @@ namespace Timelapse.ImageSetLoadingPipeline
         {
             get
             {
-                if (field == null)
-                {
-                    // Lazy load
-                    var task = File.LoadBitmapAsync(this.RootPathToImages, ImageDisplayIntentEnum.Ephemeral, ImageDimensionEnum.UseWidth);
-                    task.Wait();
-
-                    var loadResult = task.Result;
-                    field = loadResult.Item1;
-                }
+                field ??= File.LoadBitmap(RootPathToImages,
+                    Constant.ImageValues.PreviewWidth128,
+                    ImageDisplayIntentEnum.Ephemeral,
+                    ImageDimensionEnum.UseWidth,
+                    out _);
 
                 return field;
             }
@@ -96,7 +92,7 @@ namespace Timelapse.ImageSetLoadingPipeline
             });
         }
 
-        private string HelperGetFileMediaType(string fileName)
+        private static string HelperGetFileMediaType(string fileName)
         {
             string extension = System.IO.Path.GetExtension(fileName);
             string fileMediaType;

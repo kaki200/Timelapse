@@ -195,13 +195,21 @@
                     <Separator />
 
                     <!-- Switch to Template Editor -->
-                    <MenuItem Name="MenuItemTemplateEditor" IsEnabled="true" 
-                              Header="Switch to the Template _Editor" 
-                              Click="MenuItemSwitchToTheTemplateEditor_Click" 
+                    <MenuItem Name="MenuItemTemplateEditor" IsEnabled="true"
+                              Header="Switch to the Template _Editor"
                               ToolTip="Switch to the Template Editor to create or modify data templates.">
                         <MenuItem.Icon>
                             <Image Source="TemplateEditor/Icons/TemplateEditor32.ico" />
                         </MenuItem.Icon>
+                        <MenuItem Name="MenuItemTemplateEditorWithoutFile"
+                                  Header="_Where you select the template to open"
+                                  Click="MenuItemSwitchToTheTemplateEditor_Click"
+                                  ToolTip="Open the Template Editor. Then select the template you want via its File menu." />
+                        <MenuItem Name="MenuItemTemplateEditorOnCurrentFile"
+                                  IsEnabled="false"
+                                  Header="_On this image set's template"
+                                  Click="MenuItemSwitchToTheTemplateEditorOnCurrentFile_Click"
+                                  ToolTip="Close the current image set and try to open this image set's template in the Template Editor." />
                     </MenuItem>
 
                     <Separator />
@@ -943,11 +951,17 @@
 
                     <Separator/>
 
-                    <MenuItem Name="MenuItemMailToTimelapseDevelopers" Header="Email the Timelapse developer&#x2026;" Click="MenuMailToTimelapseDevelopers_Click" ToolTip="Post an email to the Timelapse developers. Feedback, bug reports, feature requests, etc are all appreciated.">
+                    <MenuItem Header="Email the Timelapse developer" ToolTip="Send an email to Saul Greenberg, the Timelapse developer" SubmenuOpened="MenuEmailTimelapseDeveloper_SubmenuOpened">
                         <MenuItem.Icon>
                             <Image Source="Icons/EmailSend_32x.png" />
                         </MenuItem.Icon>
+                        <MenuItem Name="MenuItemMailToTimelapseDevelopers" Header="Compose email&#x2026;" Click="MenuMailToTimelapseDevelopers_Click"
+                                  ToolTip="Post an email to the Timelapse developers. Feedback, bug reports, feature requests, etc are all appreciated." />
+                        <MenuItem Name="MenuItemEmailErrorLog" Header="Compose and include error log&#x2026;" Click="MenuItemEmailErrorLog_Click"
+                                  ToolTip="If you have issues or unexpected crashes, you can email the error log to the Timelapse developer." />
                     </MenuItem>
+                    <MenuItem Name="MenuItemOpenErrorLog" Header="View error log" Click="MenuItemOpenErrorLog_Click"
+                              ToolTip="The log records certain warnings and errors.&#x0a;If you have any issues, the developer may ask you to send its text to him." />
                     <Separator/>
 
                     <MenuItem Name="MenuItemAbout" Header="_About&#x2026;" Click="MenuItemAbout_Click" ToolTip="Displays version information about this program and how to contact its creator">

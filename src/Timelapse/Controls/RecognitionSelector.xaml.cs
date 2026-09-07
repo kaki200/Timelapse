@@ -4,17 +4,16 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Data;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Timelapse.Constant;
-using Timelapse.Dialog;
 using Timelapse.Database;
 using Timelapse.DataStructures;
 using Timelapse.DebuggingSupport;
+using Timelapse.Dialog;
 using Timelapse.EventArguments;
 using Timelapse.Extensions;
 using Timelapse.Recognition;
@@ -223,14 +222,21 @@ namespace Timelapse.Controls
             // RecognitionsRefreshCounts will also try to drop them in its finally block
         }
 
+        // Tier S (self-healing): these tables are recreated fresh (DROP IF EXISTS + CREATE) every
+        // time they're needed (see CreateTempTableAndIndexFor* below, which already treat their own
+        // writes as survivable), so a failed drop here is harmless — just log it. Run off the UI
+        // thread so a slow/contended drop (e.g. on a network share) can't freeze the UI on unload.
         private void DropSessionTempTables()
         {
-            string query = SqlForCounting.DoDropTemporaryTablesForSession();
-            SqlOperationResult result = Database.Database.ExecuteNonQueryWithRollback(query, 3000);
-            if (!result.Success)
+            _ = Task.Run(() =>
             {
-                GlobalReferences.MainWindow.OnUnhandledException(this, new UnhandledExceptionEventArgs(new SqlOperationException("Error in DropSessionTempTables", result), true));
-            }
+                string query = SqlForCounting.DoDropTemporaryTablesForSession();
+                SqlOperationResult result = Database.Database.ExecuteNonQueryWithRollback(query);
+                if (!result.Success)
+                {
+                    AppLog.Warning($"DropSessionTempTables: failed to drop session temp tables (harmless, they will be dropped and recreated next time they're needed). {result.ErrorMessage}");
+                }
+            });
         }
         #endregion
 
@@ -417,10 +423,12 @@ namespace Timelapse.Controls
                 this.ShowProgressOrAbortIfCancelled(true, "preparations (initial database tables and indexes");
 
                 string query1 = SqlForCounting.CreateTempTableAndIndexForEpisodePrefixCounts(episodeNoteField);
-                Database.Database.ExecuteNonQueryWithRollback(query1);
+                SqlOperationResult result1 = Database.Database.ExecuteNonQueryWithRollback(query1, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs); // Intentional: temp-table write failure is survivable; downstream queries return empty results
+                if (!result1.Success) AppLog.Warning($"CreateTempTableAndIndexForEpisodePrefixCounts failed (survivable, downstream queries return empty results). {result1.ErrorMessage}");
 
                 string query2 = SqlForCounting.CreateTempTableAndIndexForEpisodePrefixMap(episodeNoteField);
-                Database.Database.ExecuteNonQueryWithRollback(query2);
+                SqlOperationResult result2 = Database.Database.ExecuteNonQueryWithRollback(query2, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs); // Intentional: temp-table write failure is survivable; downstream queries return empty results
+                if (!result2.Success) AppLog.Warning($"CreateTempTableAndIndexForEpisodePrefixMap failed (survivable, downstream queries return empty results). {result2.ErrorMessage}");
                 isSessionTmpTablesCreated = true;
 
             }
@@ -435,7 +443,8 @@ namespace Timelapse.Controls
                 // Rebuild the filtered image IDs temp table when the where statement changes
                 this.ShowProgressOrAbortIfCancelled(true, ": examining conditions");
                 string query3 = SqlForCounting.CreateTempTableAndIndexForFilteredImageIds(where);
-                Database.Database.ExecuteNonQueryWithRollback(query3);
+                SqlOperationResult result3 = Database.Database.ExecuteNonQueryWithRollback(query3, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs); // Intentional: temp-table write failure is survivable; downstream queries return empty results
+                if (!result3.Success) AppLog.Warning($"CreateTempTableAndIndexForFilteredImageIds failed (survivable, downstream queries return empty results). {result3.ErrorMessage}");
             }
 
             if (false == isPerWhereTmpTablesCreated || isWhereChanged || isThresholdChanged)
@@ -447,7 +456,8 @@ namespace Timelapse.Controls
                 // -- ============================================================================
                 this.ShowProgressOrAbortIfCancelled(true, ": examining conditions");
                 string query4 = SqlForCounting.CreateTempTableAndIndexForEpisodeDetectionFlags(lowerDetectionConfidence, upperDetectionConfidence);
-                Database.Database.ExecuteNonQueryWithRollback(query4);
+                SqlOperationResult result4 = Database.Database.ExecuteNonQueryWithRollback(query4, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs); // Intentional: temp-table write failure is survivable; downstream queries return empty results
+                if (!result4.Success) AppLog.Warning($"CreateTempTableAndIndexForEpisodeDetectionFlags failed (survivable, downstream queries return empty results). {result4.ErrorMessage}");
                 isPerWhereTmpTablesCreated = true;
             }
             lastWhereStatement = where;
@@ -932,9 +942,7 @@ namespace Timelapse.Controls
                 // The selection was done by the user, so clear the taxon node text so the Taxon tree does not show a preselected item 
                 this.RecognitionSelections.SelectedTaxonNode = string.Empty;
             }
-            List<string> classificationCategoryLabels = DataGridClassifications.SelectedItems.OfType<CategoryCount>()
-                .Select(cc => cc.Category)
-                .ToList();
+            List<string> classificationCategoryLabels = [.. DataGridClassifications.SelectedItems.OfType<CategoryCount>().Select(cc => cc.Category)];
 
             if (classificationCategoryLabels.Count > 0)
             {
@@ -1121,9 +1129,7 @@ namespace Timelapse.Controls
             }
 
             // Get the current Classification selection, if any
-            List<string> classificationCategoryLabels = DataGridClassifications.SelectedItems.OfType<CategoryCount>()
-                .Select(cc => cc.Category)
-                .ToList();
+            List<string> classificationCategoryLabels = [.. DataGridClassifications.SelectedItems.OfType<CategoryCount>().Select(cc => cc.Category)];
 
             // Compose the argument and send the event
             RecognitionSelectionChangedEventArgs e = new(detectionCategoryLabel, classificationCategoryLabels, refreshRecognitionCountsRequired,
@@ -1328,7 +1334,7 @@ namespace Timelapse.Controls
 
         }
 
-        private void DataGridEnableState(DataGrid dataGrid, bool enableState, bool mouseState, bool updateCursorToMatchState)
+        private static void DataGridEnableState(DataGrid dataGrid, bool enableState, bool mouseState, bool updateCursorToMatchState)
         {
             if (updateCursorToMatchState)
             {
@@ -1644,7 +1650,6 @@ namespace Timelapse.Controls
 
             string what = countingDetections ? "detections" : "classifications";
             this.Owner.Progress.Report(new(0, $"Counting {what} ({entity}). Please wait", true, true));
-            Thread.Sleep(ThrottleValues.RenderingBackoffTime); // Allows the UI thread to update every now and then
         }
 
         #endregion
@@ -1777,7 +1782,7 @@ namespace Timelapse.Controls
                            + $"       {thenOneElse0EndAs} \"{has_prefix + kvp.Value}\" {comma} {lf}";
                 }
                 query += $"  {Sql.From} {DBTables.Detections} {lf}"
-                       + $"  {Sql.InnerJoin} {DBTables.FileData} {Sql.On} {dtId} = {detId} {lf}"
+                       + $"  {Sql.InnerJoin} {DBTables.FileData} {Sql.On} {dtId}{Sql.Equal}{detId} {lf}"
                        + $"  {where} {lf}"
                        + $"  {Sql.GroupBy} {detId} {lf}"
                        + $") {lf}"
@@ -2013,12 +2018,12 @@ namespace Timelapse.Controls
                                + $"            {thenOneElse0EndAs} {HasHighConfDetection} {lf}"
                                + $"     {Sql.From} {DBTables.Detections} {lf}"
                                + $"     {Sql.InnerJoin} {tmpTableName3} {lf}"
-                               + $"         {Sql.On} {tmpTableName3}.{ImageId} = {DBTables.Detections}.{DatabaseColumn.ID} {lf}"
+                               + $"         {Sql.On} {tmpTableName3}{Sql.Dot}{ImageId}{Sql.Equal}{DBTables.Detections}{Sql.Dot}{DatabaseColumn.ID} {lf}"
                                + $"     {Sql.InnerJoin} {tmpTableName2} {lf}"
-                               + $"         {Sql.On} {tmpTableName2}.{ImageId} = {DBTables.Detections}.{DatabaseColumn.ID} {lf}"
-                               + $"     {Sql.GroupBy} {DBTables.Detections}.{DatabaseColumn.ID} {lf}"
+                               + $"         {Sql.On} {tmpTableName2}{Sql.Dot}{ImageId}{Sql.Equal}{DBTables.Detections}{Sql.Dot}{DatabaseColumn.ID} {lf}"
+                               + $"     {Sql.GroupBy} {DBTables.Detections}{Sql.Dot}{DatabaseColumn.ID} {lf}"
                                + $"   ) {Sql.As} {PerImageFlags}{lf}"
-                               + $"   {Sql.GroupBy} {PerImageFlags}.{EpisodePrefix}; {lf}{lf}"
+                               + $"   {Sql.GroupBy} {PerImageFlags}{Sql.Dot}{EpisodePrefix}; {lf}{lf}"
                                + $"{Sql.CreateUniqueIndex} {tmpIndex1} {Sql.On} {tmpTableName1} ({EpisodePrefix}); {lf}";
                 return query;
             }
@@ -2068,8 +2073,7 @@ namespace Timelapse.Controls
                                + $"     {Sql.Else} 0 {Sql.End} ) {Sql.As} {CountEmpty} {lf}"
                                + $"{Sql.From} {tmpTable2}{lf}"
                                + $"{Sql.InnerJoin} {tmpTable1}{lf}"
-                               + $"  {Sql.On} {tmpTable1}.{EpisodePrefix} {lf}"
-                               + $"    = {tmpTable2}.{EpisodePrefix}; {lf}";
+                               + $"  {Sql.On} {tmpTable1}{Sql.Dot}{EpisodePrefix}{Sql.Equal}{tmpTable2}{Sql.Dot}{EpisodePrefix}; {lf}";
                 return query;
             }
 
@@ -2124,17 +2128,16 @@ namespace Timelapse.Controls
                                + $"      {tmpTable3}.{EpisodePrefix}{lf}"
                                + $"    {Sql.From} {DBTables.Detections} {lf}"
                                + $"    {Sql.InnerJoin} {tmpTable4}{lf}"
-                               + $"        {Sql.On} {tmpTable4}.{ImageId} = {detId}  {lf}"
+                               + $"        {Sql.On} {tmpTable4}{Sql.Dot}{ImageId}{Sql.Equal}{detId}  {lf}"
                                + $"    {Sql.InnerJoin} {tmpTable3}{lf}"
-                               + $"        {Sql.On} {tmpTable3}.{ImageId} = {detId}  {lf}"
+                               + $"        {Sql.On} {tmpTable3}{Sql.Dot}{ImageId}{Sql.Equal}{detId}  {lf}"
 
                                + $"     {Sql.Where} {detConf} {Sql.Between} {lowerDetectionConfidence} {Sql.And} {higherDetectionConfidence} {lf}"
                                + $") {Sql.As} {DistinctCategoryEpisodes} {lf}"
                                + $"{Sql.InnerJoin} {tmpTable2}{lf}"
-                               + $"        {Sql.On} {tmpTable2}.{EpisodePrefix} {lf}"
-                               + $"         = {DistinctCategoryEpisodes}.{EpisodePrefix}  {lf}"
+                               + $"        {Sql.On} {tmpTable2}{Sql.Dot}{EpisodePrefix}{Sql.Equal}{DistinctCategoryEpisodes}{Sql.Dot}{EpisodePrefix}  {lf}"
 
-                               + $"{Sql.GroupBy} {DistinctCategoryEpisodes}.{DetectionCategory};{lf}"
+                               + $"{Sql.GroupBy} {DistinctCategoryEpisodes}{Sql.Dot}{DetectionCategory};{lf}"
                     ;
                 return query;
             }
@@ -2202,16 +2205,15 @@ namespace Timelapse.Controls
                              + $"    {Sql.From} {DBTables.Detections} {lf}"
 
                              + $"    {Sql.InnerJoin} {tmpTable4}{lf}"
-                             + $"        {Sql.On} {tmpTable4}.{ImageId} = {detId}  {lf}"
+                             + $"        {Sql.On} {tmpTable4}{Sql.Dot}{ImageId}{Sql.Equal}{detId}  {lf}"
                              + $"    {Sql.InnerJoin} {tmpTable3}{lf}"
-                             + $"        {Sql.On} {tmpTable3}.{ImageId} = {detId}  {lf}"
+                             + $"        {Sql.On} {tmpTable3}{Sql.Dot}{ImageId}{Sql.Equal}{detId}  {lf}"
                              + $"     {Sql.Where} {detConf} {Sql.Between} {lowerDetectionConfidence} {Sql.And} {higherDetectionConfidence} {lf}"
                              + $"        {Sql.And} {DBTables.Detections}.{DetectionColumns.ClassificationConf} {Sql.Between} {lowerClassificationConfidence} {Sql.And} {higherClassificationConfidence}{lf}"
                              + $") {Sql.As} {DistinctClassificationEpisodes} {lf}"
                              + $"{Sql.InnerJoin} {tmpTable2}{lf}"
-                             + $"        {Sql.On} {tmpTable2}.{EpisodePrefix} {lf}"
-                             + $"         = {DistinctClassificationEpisodes}.{EpisodePrefix}  {lf}"
-                             + $"{Sql.GroupBy} {DistinctClassificationEpisodes}.{ClassificationCategory};{lf}"
+                             + $"        {Sql.On} {tmpTable2}{Sql.Dot}{EpisodePrefix}{Sql.Equal}{DistinctClassificationEpisodes}{Sql.Dot}{EpisodePrefix}  {lf}"
+                             + $"{Sql.GroupBy} {DistinctClassificationEpisodes}{Sql.Dot}{ClassificationCategory};{lf}"
                     ;
                 return query;
             }

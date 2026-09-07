@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Timelapse.Constant;
+using Timelapse.DebuggingSupport;
 
 namespace Timelapse.Database
 {
@@ -49,10 +50,13 @@ namespace Timelapse.Database
             //   pre-transaction  → pragmas off + temp-table cleanup
             //   transactional    → all ID remapping, rolled back atomically on failure
             //   post-transaction → pragmas restored
+            // ResetIDsAndVacuum only ever runs via ResetIDsAndVacuumAsync (Task.Run), so it's safe to
+            // opt into the extended BUSY/LOCKED retry budget for network-share resilience.
             SqlOperationResult result = database.ExecuteNonQueryWithRollback(
                 GetPreTransactionStatements(),
                 GetTransactionalStatements(detectionsExist, detectionsVideoExist, detectionsVideoTableExists),
-                GetPostTransactionStatements(detectionsExist));
+                GetPostTransactionStatements(detectionsExist),
+                ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
 
             if (!result.Success)
             {
@@ -64,7 +68,9 @@ namespace Timelapse.Database
             }
 
             // VACUUM is forbidden inside a transaction and opens its own connection internally.
-            database.Vacuum();
+            // Failure is survivable — the database just retains its pre-vacuum size.
+            SqlOperationResult vacuumResult = database.Vacuum();
+            if (!vacuumResult.Success) AppLog.Warning($"ResetIDsAndVacuum: Vacuum failed (harmless, database just retains its pre-vacuum size). {vacuumResult.ErrorMessage}");
         }
 
         public static Task ResetIDsAndVacuumAsync(SQLiteWrapper database)
@@ -83,8 +89,12 @@ namespace Timelapse.Database
                 // Must precede BeginTransaction — ignored by SQLite inside a transaction.
                 $"{Sql.PragmaForeignKeysOff}",
 
-                // Cannot be changed inside a transaction.
-                $"{Sql.PragmaJournalModeWall}",
+                // Deliberately NOT setting journal_mode = WAL here (as this once did): unlike
+                // the pragmas below, journal_mode is persisted in the database file itself and
+                // is never reset by closing the connection, so it would permanently convert
+                // every database that ever runs this operation to WAL — a mode SQLite's own
+                // docs warn against using on network shares, which is exactly where these
+                // files often live. See SQLiteNeededFixes.md finding #11.
 
                 // Performance pragmas — safe to set any time, placed here for clarity.
                 $"{Sql.PragmaSynchronousNormal}",
@@ -156,9 +166,9 @@ namespace Timelapse.Database
                 //     SET Id = (SELECT new_id FROM tmpIDMapping WHERE old_id = MarkersTable.Id)
                 $@"
                 {Sql.Update} {DBTables.Markers}
-                    {Sql.Set} {DatabaseColumn.ID} = (
+                    {Sql.Set} {DatabaseColumn.ID}{Sql.Equal}(
                         {Sql.Select} new_id {Sql.From} {tmpIDMapping}
-                        {Sql.Where} old_id = MarkersTable.ID)",
+                        {Sql.Where} old_id{Sql.Equal}MarkersTable.ID)",
                 // Reset the AUTOINCREMENT counter for MarkersTable for the same reason as DataTable above.
 
                 $"UPDATE sqlite_sequence SET seq = (SELECT MAX({DatabaseColumn.ID}) FROM {DBTables.Markers}) WHERE name = {Sql.Quote(DBTables.Markers)}"

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -35,6 +36,11 @@ namespace Timelapse.Dialog
 {
     public static class Dialogs
     {
+        // Ensures TimelapseNeedsToShutDownDataWriteErrorDialog is shown at most once per process lifetime.
+        // Multiple concurrent write failures can arrive on background threads simultaneously; only the
+        // first one that wins the CAS reaches the dialog-and-shutdown logic.
+        private static int _shutdownDialogShown; // 0 = not yet shown; 1 = shown or showing
+
         #region Common test strings
         private static readonly string backupsLinkAndDirections =
             $"See the [link:{Constant.ExternalLinks.TimelapseFAQPage}|Timelapse Web site: FAQ page (Timelapse Crashes and Backups)] for how to do this.";
@@ -442,6 +448,7 @@ namespace Timelapse.Dialog
         public static void FileCantOpen(Window owner, string path, bool isFile)
         {
             string entity = isFile ? "file" : "folder";
+            AppLog.Error($"FileCantOpen: Could not open {entity}: '{path}'.");
             // Tell the user we could not read or write the file
             string title = "Could not open the " + entity;
 
@@ -687,6 +694,7 @@ namespace Timelapse.Dialog
 
         public static void DependencyFilesMissingDialog(string missingAssemblies)
         {
+            AppLog.Error($"DependencyFilesMissingDialog: Missing assemblies: {missingAssemblies}.");
             // can't use DialogMessageBox to show this message as that class requires the Timelapse window to be displayed.
             string messageTitle = $"Timelapse needs to be in its original downloaded folder.";
             StringBuilder message = new("Problem:" + Environment.NewLine);
@@ -798,6 +806,7 @@ namespace Timelapse.Dialog
 
         public static bool FilePathDeletedFileTooLongDialog(Window owner)
         {
+            AppLog.Warning("FilePathDeletedFileTooLongDialog: Deleted file paths too long — files will not be backed up to the Deleted folder.");
             const string title = "The files you want to delete won't be backed up";
             var dialog = new FormattedDialog()
             {
@@ -819,10 +828,55 @@ namespace Timelapse.Dialog
             return dialog.BuildAndShowDialog() == true;
         }
 
+        //public static void CouldNotSaveControlOrderDialog(Window owner)
+        //{
+        //    ThrowIf.IsNullArgument(owner, nameof(owner));
+        //    var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+        //    {
+        //        Owner = owner,
+        //        DialogTitle = "Could not save the new control order",
+        //        Icon = DialogIconType.Warning,
+        //        Problem = "Timelapse could not save the new control order to your template file.",
+        //        Reason = "This is likely a temporary issue caused by:" +
+        //                 "[ni] OneDrive or a network share locking the template file during its internal syncronizatino, or" +
+        //                 "[ni] an issue with your drive, e.g., a removable drive being disconnected.",
+        //        Solution = "[ni] Try the operation again in a moment." +
+        //                   "[ni] If the problem persists, check your drives."
+        //    };
+        //    FormattedDialogHelper.SetupStaticReferenceResolver(dialog);
+        //    dialog.BuildAndShowDialog();
+        //}
+
+        public static void CouldNotDeleteFoldlerOnExitDialog(Window owner, string folder)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Warning($"CouldNotDeleteFoldlerOnExitDialog: Could not delete folder '{folder}' on exit.");
+            const string title = "Timelapse could not delete you Deleted folder";
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = title,
+                Icon = DialogIconType.Information,
+
+                Problem = "You have your options set for Timelapse to delete your [e]Deleted[/e] folder on exit, which permanently removes all your deleted images and/or video files." +
+                          "[br] However, Timelapse was unable to delete that folder.",
+                Reason =  "Your options are set for Timelapse to delete your [e]Deleted[/e] folder on exit, which contains copies of all your deleted images and/or video files." + 
+                         "[br 14] However, deletion likely failed because of permission issues, or because you are using OneDrive (whose structure makes folder deletion fragile).",
+                Solution = $"You can:" +
+                           $"[li] Just ignore this - its not critical, or" +
+                           $"[li] Use your Windows file explorer to go to the [e]Deleted[/e] folder and delete it manually." +
+                           $"[li 2]Folder location: {folder}"
+            };
+            dialog.BuildAndShowDialog();
+        }
+
+
+
 
         // notify the user when the path is too long
         public static void TemplatePathTooLongDialog(Window owner, string templateDatabasePath)
         {
+            AppLog.Error($"TemplatePathTooLongDialog: '{templateDatabasePath}'.");
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
                 Owner = owner,
@@ -843,6 +897,7 @@ namespace Timelapse.Dialog
         // notify the user the template couldn't be loaded because its path is too long
         public static void DatabasePathTooLongDialog(Window owner, string databasePath)
         {
+            AppLog.Error($"DatabasePathTooLongDialog: '{databasePath}'.");
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
                 Owner = owner,
@@ -864,6 +919,7 @@ namespace Timelapse.Dialog
         // Warn the user if backups may not be made
         public static void BackupPathTooLongDialog(Window owner)
         {
+            AppLog.Warning("BackupPathTooLongDialog: Backup path too long — backups will not be created.");
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
                 Owner = owner,
@@ -911,6 +967,7 @@ namespace Timelapse.Dialog
 
         public static void TemplateInDisallowedFolder(Window owner, bool isDrive, string path)
         {
+            AppLog.Error($"TemplateInDisallowedFolder: path '{path}', isDrive: {isDrive}.");
             const string title = "Your template file is in a problematic location";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -952,6 +1009,7 @@ namespace Timelapse.Dialog
         public static void TemplateIncludesControlOfUnknownType(Window owner, string unknownTypes)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"TemplateIncludesControlOfUnknownType: Unknown types: '{unknownTypes}'.");
             // notify the user the template couldn't be loaded rather than silently doing nothing
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -977,6 +1035,7 @@ namespace Timelapse.Dialog
         public static void TemplateFileNotLoadedAsCorruptDialog(Window owner, string templateDatabasePath)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"TemplateFileNotLoadedAsCorruptDialog: '{templateDatabasePath}'.");
             string title = "Timelapse could not load the Template file.";
             // notify the user the template couldn't be loaded rather than silently doing nothing
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -1013,6 +1072,7 @@ namespace Timelapse.Dialog
 
         public static void DatabaseFileNotLoadedAsCorruptDialog(Window owner, string ddbDatabasePath, bool isEmpty)
         {
+            AppLog.Error($"DatabaseFileNotLoadedAsCorruptDialog: '{ddbDatabasePath}'. Is empty: {isEmpty}.");
             // notify the user the database couldn't be loaded because there is a problem with it
             string title = "Timelapse could not load your database file.";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -1042,11 +1102,29 @@ namespace Timelapse.Dialog
 
         #endregion
 
+        #region FileData columns missing from / extra in database
+
+        // Shows the schema-mismatch dialog and returns a result describing what the user chose to repair.
+        // missingDataLabels: DataLabels in TemplateTable absent from the FileData table.
+        // extraColumns:      Columns in FileData with no matching DataLabel in TemplateTable.
+        public static DatabaseSchemaMismatchResult DatabaseColumnsMissingDialog(
+            Window owner, List<string> missingDataLabels, List<string> extraColumns, FileDatabase fileDatabase)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"DatabaseColumnsMissingDialog: {missingDataLabels?.Count ?? 0} missing column(s), {extraColumns?.Count ?? 0} extra column(s).");
+            var dialog = new DatabaseSchemaMismatchDialog(owner, missingDataLabels, extraColumns, fileDatabase);
+            dialog.ShowDialog();
+            return dialog.Result ?? new DatabaseSchemaMismatchResult { UserChoseRepair = false };
+        }
+
+        #endregion
+
         #region Not a Timelapse File
 
         public static void FileNotATimelapseFile(Window owner, string templateDatabasePath)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"FileNotATimelapseFile: '{templateDatabasePath}'.");
             // notify the user the template couldn't be loaded rather than silently doing nothing
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -1489,6 +1567,7 @@ namespace Timelapse.Dialog
         public static void MenuFileCantWriteSpreadsheetFileDialog(Window owner, string csvFilePath, string exceptionName, string exceptionMessage)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"MenuFileCantWriteSpreadsheetFileDialog: '{csvFilePath}'. {exceptionName}: {exceptionMessage}");
             const string title = "Can't write the spreadsheet file.";
 
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -1561,8 +1640,7 @@ namespace Timelapse.Dialog
         }
         #endregion
 
-        #region DataExported/Imported To CSV
-
+        #region DataExported To CSV
         // A message saying that the folder data was exported to various CSV files
         public static void AllDataExportedToCSV(Window owner, string folderPath, List<string> files, bool imageDataIncluded)
         {
@@ -1647,6 +1725,26 @@ namespace Timelapse.Dialog
                 GlobalReferences.TimelapseState.SuppressCsvExportDialog = dialog.DontShowAgain.IsChecked.Value;
             }
         }
+        #endregion
+
+        #region Data Imported To CSV
+        private static readonly string importingCSVRules = $"[b]The first row[/b] in the [i].csv[/i] file must comprise column headers, where:[br 2]"
+                                           + $"[li] [b]File[/b] must be included."
+                                           + $"[li] [b]RelativePath[/b] must be included if any of your images are in subfolders."
+                                           + $"[li] [b]Other headers[/b] are a subset of your template's DataLabels (columns can be omitted)."
+                                           + $"[li] [b]Header labels[/b] must match its corresponding DataLabel labels"
+                                           + $"[br 14][b]Subsequent rows[/b] define the data for each file, where data must match the Header/Template type:"
+                                           + $"[li] [b]File[/b] data must match the name of the file you want to update."
+                                           + $"[li] [b]RelativePath[/b] data should match the sub-folder path containing that file, if any."
+                                           + $"[li] [b]Counter, Integer and Decimal[/b] data must be blank, 0, or a positive integer."
+                                           + $"[li] [b]DateTime[/b], [b]Date[/b] and [b]Time[/b] data must follow the specific date/time formats (see [e]File|Export data[/e])."
+                                           + $"[li] [b]Flag[/b] and [b]DeleteFlag[/b] data must be [i]true[/i] or [i]false[/i]."
+                                           + $"[li] [b]FixedChoice[/b] and [b]MultiChoice[/b] data should exactly match a corresponding list item defined in the template, or empty."
+                                           + $"[li] [b]Folder[/b] and [b]ImageQuality[/b] columns, if included, are skipped over."
+                                           + $"[br 14][b]Important:[/b] The [i]csv[/i] row is skipped if its [b]RelativePath/File[/b] location does not match a file in the Timelapse database.";
+
+        private static readonly string importingCSVRulesDetailsHeading = $"Expand this section to see rules for importing CSV files.";
+
 
         /// <summary>
         /// Tell the user how importing CSV files work. Give them the opportunity to abort.
@@ -1663,23 +1761,8 @@ namespace Timelapse.Dialog
                 // Height = 580,
                 // Width = 640,
                 Title = title,
-                What = "Importing data from a [i].csv[/i] (comma separated value) file follows the rules below.",
-                Reason = $"The first row in the [i].csv[/i] file must comprise column headers, where:[br 2]"
-                          + $"[li] [b]File[/b] must be included."
-                          + $"[li] [b]RelativePath[/b] must be included if any of your images are in subfolders."
-                          + $"[li] [b]Remaining headers[/b] should generally match your template's DataLabels[br 14]"
-                          + $"Headers can be a subset of your template's DataLabels.[br 4]"
-                          + $"Subsequent rows define the data for each file, where it must match the Header type:[br 2]"
-                          + $"[li] [b]File[/b] data should match the name of the file you want to update." +
-                          Environment.NewLine
-                          + $"[li] [b]RelativePath[/b] data should match the sub-folder path containing that file, if any."
-                          + $"[li] [b]Counter[/b] data must be blank, 0, or a positive integer."
-                          + $"[li] [b]DateTime[/b], [b]Date[/b] and [b]Time[/b] data must follow the specific date/time formats (see [e]File|Export data[/e])."
-                          + $"[li] [b]Flag[/b] and [b]DeleteFlag[/b] data must be [i]true[/i] or [i]false[/i]."
-                          + $"[li] [b]FixedChoice[/b] data should exactly match a corresponding list item defined in the template, or empty."
-                          + $"[li] [b]Folder[/b] and [b]ImageQuality[/b] columns, if included, are skipped over.",
-                Result = "Database values will be updated only for matching RelativePath/File entries. Non-matching entries are ignored.",
-                Hint = $"Warnings will be generated for non-matching CSV headers, which you can then fix.[br 18]"
+                What = "Importing data from a [i].csv[/i] (comma separated value) file follows the rules below.[br 14]" + importingCSVRules,
+                Hint = $"Warnings will be generated if Timelapse encounters any issues in your [i].csv[/i] file.[br 18]"
                        + $"{dontShowMessageAgainInstructions}",
                 DontShowAgain =
                 {
@@ -1695,7 +1778,7 @@ namespace Timelapse.Dialog
             return result;
         }
 
-        // CSV import Cancelled 
+        // CSV import Cancelled on user's request
         public static void MenuFileImportCSVFileCancelledDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
@@ -1708,81 +1791,170 @@ namespace Timelapse.Dialog
                 // Height = 265,
                 What = $"Importing of data from a CSV file was cancelled by you",
                 Result = "Nothing was imported, so your data remains unchanged.",
+                DetailsHeading = importingCSVRulesDetailsHeading,
+                Details = importingCSVRules
 
             };
             dialog.BuildAndShowDialog();
         }
 
-        /// <summary>
-        /// Can't import CSV File
-        /// </summary>
-        public static void MenuFileCantImportCSVFileDialog(Window owner, string csvFileName, List<string> resultAndImportErrors)
+        // CSV import Cancelled as can't read file
+        public static void MenuFileImportCSVFileCannotBeReadDialog(Window owner, string csvFileName, List<string> resultAndImportErrors)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
-            const string title = "Can't import the .csv file.";
+            const string title = "Timelapse could not open or read your .csv file.";
 
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
                 Owner = owner,
                 DialogTitle = title,
                 Icon = DialogIconType.Error,
-                // Height = 580,
-                // Width = 640,
                 Title = title,
-                Problem = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] could not be read.",
-                Reason = "The [i].csv[/i] file is not compatible with the Timelapse template defining the current image set.",
-                Solution = "Change your .csv file to fix the errors listed in the [b]Details[/b] below and try again.[br 2]",
-                Hint = "Timelapse checks the following when importing the .csv file:[br 2]"
-                          + $"[li] The first row is a header whose column names match the data labels in the .tdb template file"
-                          + $"[li] [b]Counter[/b] data values are numbers or blanks."
-                          + $"[li] [b]Flag[/b] and [b]DeleteFlag[/b] values are either [i]True[/i] or [i]False[/i]."
-                          + $"[li] [b]Choice[/b] values are in that field's [i]Choice[/i] list, defined in the template.[br 14]"
-
-                          + "While Timelapse will do the best it can to update your fields:[br 2]"
-                          + $"[li] the [i]csv[/i] row is skipped if its [b]RelativePath/File[/b] location do not match a file in the Timelapse database."
-                          + $"[li] the [i]csv[/i] row's [b]Date/Time[/b] is updated only if it is in the expected format (see [link:{Constant.ExternalLinks.TimelapseGuideReference}|Timelapse Reference Guide]).",
-                Result = "Importing of data from the CSV file was aborted. No changes were made."
+                Problem = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] could not be opened or read.",
+                Solution = "The solution depends on which of the following caused the issue.",
+                Result = "Importing of data from the CSV file was aborted. No changes were made.",
+                DetailsHeading = importingCSVRulesDetailsHeading,
+                Details = importingCSVRules
             };
+
 
             if (resultAndImportErrors != null)
             {
-                dialog.Details = "These errors were recorded: [br 2]";
                 foreach (string importError in resultAndImportErrors)
                 {
-                    string prefix = (importError[0] == '-') ? "   " : "[li] ";
-                    dialog.Details += prefix + importError;
+                    string prefix = "[li] ";
+                    dialog.Solution += prefix + importError;
                 }
             }
 
             dialog.BuildAndShowDialog();
         }
 
+        // CSV import Cancelled as it doesn't contain any data rows (perhaps just headers, or is blank)
+        public static void MenuFileImportCSVFileNoDataPresentDialog(Window owner, string csvFileName, List<string> resultAndImportErrors)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            const string title = "Your .csv file does not contain any data";
+
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = title,
+                Icon = DialogIconType.Error,
+                Title = title,
+                Problem = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] does not contain any data.",
+                Reason = "This is what Timelapse saw.",
+                Result = "Importing of data from the CSV file was aborted. No changes were made.",
+                DetailsHeading = importingCSVRulesDetailsHeading,
+                Details = importingCSVRules
+            };
+
+            if (resultAndImportErrors != null)
+            {
+                foreach (string importError in resultAndImportErrors)
+                {
+                    string prefix = "[li] ";
+                    dialog.Reason += prefix + importError;
+                }
+            }
+
+            dialog.BuildAndShowDialog();
+        }
+
+        // CSV import Cancelled as the csv file contains headers that do not match those in the template
+        public static void MenuFileImportCSVAbortedAsHeaderErrors(Window owner, string csvFileName, List<string> resultAndImportErrors)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            const string title = "Importing aborted as your CSV file header contains errors";
+
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = title,
+                Icon = DialogIconType.Error,
+                Title = title,
+                Problem = $"The header (first row) in your file #DarkSlateGray[[e]{csvFileName}[/e]] contains errors.",
+                Reason = "This is what Timelapse saw.",
+                Result = "Importing of data from the CSV file was aborted. No changes were made.",
+                DetailsHeading = importingCSVRulesDetailsHeading,
+                Details = importingCSVRules
+            };
+
+            if (resultAndImportErrors != null)
+            {
+                foreach (string importError in resultAndImportErrors)
+                {
+                    string prefix = "[li] ";
+                    dialog.Reason += prefix + importError;
+                }
+            }
+
+            dialog.BuildAndShowDialog();
+        }
+
+        // CSV import Cancelled as csv data columns contain errors
+        public static void MenuFileImportCSVAbortedAsDataErrors(Window owner, string csvFileName, List<string> resultAndImportErrors)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            const string title = "Importing aborted as your CSV file data contains errors";
+
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = title,
+                Icon = DialogIconType.Error,
+                Title = title,
+                Problem = $"The data in your file #DarkSlateGray[[e]{csvFileName}[/e]] contains errors.",
+                Reason = "This is what Timelapse saw.",
+                Result = "Importing of data from the CSV file was aborted. No changes were made.",
+                DetailsHeading = importingCSVRulesDetailsHeading,
+                Details = importingCSVRules
+            };
+
+            if (resultAndImportErrors != null)
+            {
+                foreach (string importError in resultAndImportErrors)
+                {
+                    string prefix = "[li] ";
+                    dialog.Reason += prefix + importError;
+                }
+            }
+            
+            dialog.BuildAndShowDialog();
+        }
+
         /// <summary>
-        /// CSV file imported
+        /// CSV file imported, perhaps with warnings
         /// </summary>
         public static void MenuFileCSVFileImportedDialog(Window owner, string csvFileName, List<string> warnings)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
-            const string title = "CSV file imported";
+            bool warningsExist = warnings.Count > 0;
+            string title = "CSV file imported";
+            if (warningsExist)
+            {
+                title += " but with warnings";
+            }
 
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
                 Owner = owner,
                 DialogTitle = title,
                 Icon = DialogIconType.Information,
-                // Height = 360,
                 What = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] was successfully imported.",
                 Hint = $"Check your data. If it is not what you expect, restore your data by using latest backup file in [e]{File.BackupFolder}[/e]. {backupsLinkAndDirections}"
             };
-            if (warnings.Count != 0)
+            if (warningsExist)
             {
-                dialog.Result = "Several warnings were generated. Expand the [b]Details[/b] section to check them.";
-                dialog.Details = "These warnings were generated.[br 2]";
+                dialog.Result = "Warnings are listed below, where some fields may not have been updated.";
                 foreach (string warning in warnings)
                 {
-                    string prefix = (warning[0] == '-') ? "   " : "[li] ";
-                    dialog.Details += Environment.NewLine + prefix + warning;
+                    string prefix = warning[0] == '-' ? "   " : "[li] ";
+                    dialog.Result += Environment.NewLine + prefix + warning;
                 }
+
+                dialog.Details = importingCSVRules;
+                dialog.DetailsHeading = importingCSVRulesDetailsHeading;
             }
 
             dialog.BuildAndShowDialog();
@@ -1790,11 +1962,12 @@ namespace Timelapse.Dialog
         }
 
         /// <summary>
-        /// Can't import the .csv file
+        /// Can't import the .csv file (fallback, unknown reason)
         /// </summary>
         public static void MenuFileCantImportCSVFileDialog(Window owner, string csvFileName, string exceptionMessage)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"MenuFileCantImportCSVFileDialog: '{csvFileName}'. {exceptionMessage}");
             const string title = "Can't import the .csv file.";
 
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -1802,18 +1975,18 @@ namespace Timelapse.Dialog
                 Owner = owner,
                 DialogTitle = title,
                 Icon = DialogIconType.Error,
-                // Height = 370,
-                Problem = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] could not be opened.",
-                Reason = "The file is likely already open in another program. The [b]Details[/b] section below provides a technical explanation",
-                Solution = "If the file is open in another program, close it.",
+                Problem = $"The file #DarkSlateGray[[e]{csvFileName}[/e]] could not be opened or its rows read.",
+                Reason = "The [b]Details[/b] section below provides a technical explanation",
                 Result = "Importing of data from the CSV file was aborted. No changes were made.",
-                Hint = "Is the file open in Excel?",
-                Details = "The technical reason for failing to import data is listed below."
-                          + $"[li] {exceptionMessage}"
+                DetailsHeading = "Expand to see the technical reason behind this issue.",
+                Details = $"[li] {exceptionMessage}"
             };
             dialog.BuildAndShowDialog();
         }
 
+        #endregion
+
+        #region ExportCurrentImage
         /// <summary>
         /// Can't export the currently displayed image as a file
         /// </summary>
@@ -1827,7 +2000,6 @@ namespace Timelapse.Dialog
                 Owner = owner,
                 DialogTitle = title,
                 Icon = DialogIconType.Error,
-                // Height = 300,
                 Problem = "Timelapse can't export a copy of the current image or video file.",
                 Reason = "It is likely a corrupted or missing file.",
                 Solution = "Make sure you have navigated to, and are displaying, a valid file before you try to export a copy of it."
@@ -1994,6 +2166,7 @@ namespace Timelapse.Dialog
         public static void MenuEditPopulateDataFieldWithMetadataDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("MenuEditPopulateDataFieldWithMetadataDialog: Current image or video is missing or corrupted.");
             const string title = "Timelapse could not extract metadata";
 
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -2162,6 +2335,25 @@ namespace Timelapse.Dialog
             dialog.Reason = reason;
             dialog.Hint = hint;
             return dialog.BuildAndShowDialog() == true;
+        }
+
+        public static bool RandomSelectionDoesntMakeSenseDialog(Window owner)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            const string title = "Doing a Random Selection your currently selected images doesn't make much sense.";
+            var dialog = new FormattedDialog()
+            {
+                Owner = owner,
+                Icon = DialogIconType.Warning,
+                DialogTitle = title,
+                // Height = 340,
+                Problem = "Your current selection has [i]include all files in an episode[/i] turned on in the Custom Select dialog.[br]This means that a random selection could return:" +
+                          "[li]images that fit your selection criteria" +
+                          "[li]other images associated with matching episodes that don't fit your selection criteria",
+                Solution = "Select:[li][e]Okay[/e] to continue with the random selection, or [li][e]Cancel[/e] to cancel the random selection.",
+                Hint = "This is just a warning, as we just wanted to make sure that this is what you wanted to do."
+            };
+            return true == dialog.BuildAndShowDialog();
         }
 
         #endregion
@@ -2391,6 +2583,7 @@ namespace Timelapse.Dialog
         public static void DatabaseFileOpenedWithIncompatibleVersionOfTimelapse(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("DatabaseFileOpenedWithIncompatibleVersionOfTimelapse: Database file is incompatible with this version of Timelapse.");
             const string title = "You are using an old incompatible version of Timelapse";
             Cursor cursor = Mouse.OverrideCursor;
             Mouse.OverrideCursor = null;
@@ -2416,6 +2609,7 @@ namespace Timelapse.Dialog
         public static void DatabaseFileBeingMergedIsIncompatibleWithParent(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Warning("DatabaseFileBeingMergedIsIncompatibleWithParent: Merge candidate database is incompatible with the parent.");
             const string title = "You are trying to merge an old incompatible database.";
             Cursor cursor = Mouse.OverrideCursor;
             Mouse.OverrideCursor = null;
@@ -2517,6 +2711,7 @@ namespace Timelapse.Dialog
         public static void MergeErrorDatabaseFileAppearsCorruptDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("MergeErrorDatabaseFileAppearsCorruptDialog: Database .ddb file appears corrupt.");
             string title = $"Your database {File.FileDatabaseFileExtension} file  is likely corrupted.";
             // notify the user the database appears corrupt
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
@@ -2584,6 +2779,7 @@ namespace Timelapse.Dialog
         public static void MergeErrorDatabaseFileNeedsToBeUpdatedDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Warning("MergeErrorDatabaseFileNeedsToBeUpdatedDialog: Database file needs to be updated before it can be merged.");
             string title = $"Your selected database {File.FileDatabaseFileExtension} needs to be updated.";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -2652,6 +2848,7 @@ namespace Timelapse.Dialog
         public static void MergeErrorTemplateFilesNotCompatableDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("MergeErrorTemplateFilesNotCompatableDialog: Templates are incompatible, merge aborted.");
             const string title = "Incompatible templates ";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -2743,6 +2940,7 @@ namespace Timelapse.Dialog
         public static void MergeSkippedDueToMalformedSQLiteQuery(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("MergeSkippedDueToMalformedSQLiteQuery: Merge skipped due to malformed SQLite query.");
             const string title = "Merge skipped...";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -2764,6 +2962,7 @@ namespace Timelapse.Dialog
         public static void RenameRelativePathError(Window owner, MoveFolderResultEnum result, string sourceFolderPath, string destinationFolderPath)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"RenameRelativePathError (rename): result={result}, source='{sourceFolderPath}', destination='{destinationFolderPath}'.");
             string title = $"Could not rename the folder {sourceFolderPath}";
 
             string reason;
@@ -2800,6 +2999,7 @@ namespace Timelapse.Dialog
         public static void RenameRelativePathError(Window owner, CreateSubfolderResultEnum result, string sourceFolderPath, string destinationName)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error($"RenameRelativePathError (create subfolder): result={result}, source='{sourceFolderPath}', destination='{destinationName}'.");
             string title = $"Could not create the folder {destinationName}";
 
             string reason;
@@ -2982,6 +3182,7 @@ namespace Timelapse.Dialog
         public static void MenuFileRecognizersDataCouldNotBeReadDialog(Window owner)
         {
             ThrowIf.IsNullArgument(owner, nameof(owner));
+            AppLog.Error("MenuFileRecognizersDataCouldNotBeReadDialog: Recognition data could not be read.");
             const string title = "Recognition data not imported.";
             var dialog = new FormattedDialog(MessageBoxButtonType.OK)
             {
@@ -3109,17 +3310,17 @@ namespace Timelapse.Dialog
             if (detectionDuplicates)
             {
                 details += "[li]Detecton category duplicates:";
-                foreach (var item in detectionCategoryDuplicates)
+                foreach (var (Value, Count) in detectionCategoryDuplicates)
                 {
-                    details += $"[li 2]{item.Value} appears {item.Count} times";
+                    details += $"[li 2]{Value} appears {Count} times";
                 }
             }
             if (classificationDuplicates)
             {
                 details += "[li]Classification category duplicates:";
-                foreach (var item in classificationCategoryDuplicates)
+                foreach (var (Value, Count) in classificationCategoryDuplicates)
                 {
-                    details += $"[li 2]{item.Value} appears {item.Count} times";
+                    details += $"[li 2]{Value} appears {Count} times";
                 }
             }
 
@@ -3702,24 +3903,27 @@ namespace Timelapse.Dialog
                 "[br 8][b][f 5]View menu: [/f][/b]" +
 
                 "[br][i]File navigation[/i]" +
-                "[li][b]⬅[/b] ≡[e]View previous file[/e]" +
-                "[li][b]⮕[/b] ≡[e]View next file[/e]" +
+                "[li][b]⬅[/b] or [b]Page Up[/b] ≡[e]View previous file[/e]" +
+                "[li][b]⮕[/b] or [b]Page Down[/b] ≡[e]View next file[/e]" +
 
                 "[br][i]Episode navigation[/i]" +
                 "[li][b]E[/b] ≡[e]Show episode information[/e]." +
-                "[li]〔Ctl〕[b]⬅[/b] ≡[e]View previous episode[/e]" +
-                "[li]〔Ctl〕[b]⮕[/b] ≡[e]View next episode[/e]" +
+                "[li]〔Shift〕[b]⬅[/b] or (Shift〕[b]Page Up[/b] ≡[e]View previous episode[/e]" +
+                "[li]〔Shift〕[b]⮕[/b] or (Shift〕[b]Page Down[/b] ≡[e]View next episode[/e]" +
 
                 "[br][i]Thumbnail navigation in overview[/i]" +
                 "[li][b]⬆[/b] ≡[e]Previous row[/e] (of thumbnails in overview)" +
-                "[li]〔Shift〕[b]⬇[/b] ≡[e]Next row[/e] (of thumbnails in overview)" +
-                "[li][b]⬆[/b] ≡[e]Previous page[/e] (of thumbnails in overview)" +
+                "[li][b]⬇[/b] ≡[e]Next row[/e] (of thumbnails in overview)" +
+                "[li]〔Shift〕[b]⬆[/b] ≡[e]Previous page[/e] (of thumbnails in overview)" +
                 "[li]〔Shift〕[b]⬆[/b] ≡[e]Next page[/e] (of thumbnails in overview)" +
+                "[li][b]🖯Scrollwheel[/b] [e]operates Scroll bar [/e] which scrolls rows" +
 
                 "[br][i]Zooming[/i]" +
+                "[li][b](Ctl)-🖯Scrollwheel[/b] ≡[e]Zoom in/out[/e] (images\u21C4overview and between all zoom levels)" +
                 "[li][b]<[/b] ≡[e]Zoom in[/e] (ignored when data field has the focus)" +
                 "[li][b]>[/b] ≡[e]Zoom out[/e] (ignored when data field has the focus)" +
                 "[li][b]-[/b] ≡[e]Zoom out all the way[/e]" +
+                "[li][b]🖯-click on image[/b] ≡[e]Zoom out all the way[/e] to the clicked on image" +
                 "[li][b]+[/b] ≡[e]Zoom to bookmarked region[/e]" +
                 "[li][b]B[/b] ≡[e]Bookmark current zoom region[/e]" +
 
@@ -4113,9 +4317,18 @@ namespace Timelapse.Dialog
                          + $"[li] [b]Okay[/b] to close your {whatToClose} and switch to {whatToOpen}."
                          + "[li]  [b]Cancel[/b] to abort.",
                 Result = $"The {whatToClose} will be closed and then {whatToOpen} will appear.",
-                Hint = $"Switching is safe. You can always switch back later and reopen the {whatToClose}."
+                Hint = $"Switching is safe. You can always switch back later and reopen the {whatToClose}.[br 2]{dontShowMessageAgainInstructions}",
+                DontShowAgain =
+                {
+                    Visibility = Visibility.Visible
+                }
             };
-            return dialog.BuildAndShowDialog();
+            bool? result = dialog.BuildAndShowDialog();
+            if (dialog.DontShowAgain.IsChecked.HasValue)
+            {
+                GlobalReferences.TimelapseState.SuppressSwitchBetweenTimelapseAndEditorWarning = dialog.DontShowAgain.IsChecked.Value;
+            }
+            return result;
         }
         #endregion
 
@@ -4185,7 +4398,7 @@ namespace Timelapse.Dialog
 
         #region SQLiteExceptionDialog
         // ReSharper disable once UnusedMember.Global
-        public static bool? SqlError(Window owner, string context, SqlOperationResult sqlOperationResult)
+        public static bool? SqlError(Window owner, SqlOperationResult sqlOperationResult)
         {
             // warn the user about consequences of deleting a level
             var dialog = new FormattedDialog()
@@ -4201,6 +4414,156 @@ namespace Timelapse.Dialog
                    + $"[br 18] [b]Exception: [/b]{sqlOperationResult.Exception}",
                 Solution = "Mail to saul",
             };
+            return dialog.BuildAndShowDialog();
+        }
+
+        public static void TimelapseNeedsToShutDownDataWriteErrorDialog(Window owner, bool? isDDBfile=null, string message="", string filePath="", SqlOperationResult sqlResult=null)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            if (!owner.Dispatcher.CheckAccess())
+            {
+                owner.Dispatcher.Invoke(() => TimelapseNeedsToShutDownDataWriteErrorDialog(owner, isDDBfile, message, filePath, sqlResult));
+                return;
+            }
+            if (Interlocked.CompareExchange(ref _shutdownDialogShown, 1, 0) != 0) return;
+            string typeOfFile = isDDBfile.HasValue ? (isDDBfile.Value ? "data (.ddb) file" : "template (.tdb) file") : "database file";
+            string logMessage = $"TimelapseNeedsToShutDownDataWriteErrorDialog: Timelapse is shutting down due to a write error on the {typeOfFile}.";
+            if (!string.IsNullOrEmpty(filePath)) logMessage += $" File: '{filePath}'.";
+            if (!string.IsNullOrEmpty(message)) logMessage += $" Context: {message}.";
+            if (!string.IsNullOrEmpty(sqlResult?.ErrorMessage)) logMessage += $" DB error: {sqlResult.ErrorMessage}.";
+            if (!string.IsNullOrEmpty(sqlResult?.FailingStatement)) logMessage += $" SQL: {sqlResult.FailingStatement}.";
+            if (sqlResult?.Exception != null) AppLog.Error(logMessage, sqlResult.Exception);
+            else AppLog.Error(logMessage);
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = $"Timelapse v{VersionChecks.GetTimelapseCurrentVersionNumber()} needs to shut down - Issue writing data.",
+                Icon = DialogIconType.Error,
+                Problem = $"Timelapse tried to write data to the Timelapse {typeOfFile}, but couldn't. Shutting down is a precaution against data loss." ,
+                Reason = "Expand the [e]Details[/e] section below for reasons as to why this could happen.",
+                Details = "Writing issues could caused by one of the following. As some of them are temporary, its a good idea to restart Timelapse to see if the issue is resolved." +
+                         "[li] You are using a network drive or OneDrive, where" +
+                         "[li 2] the file is temporarily locked by the system, or" +
+                         "[li 2] a network glitch resulted in a communication error." +
+                         "[li] Your hard drive is having issues, e.g., a removable drive being disconnected or corrupted." +
+                         "[li] Folder or file permissions disallow writing to that location." +
+                         $"[li] The {typeOfFile} has become corrupted." +
+                         $"[li] The {typeOfFile} no longer exists at that location." +
+                         "[li] Anti-virus software is blocking access to the file.",
+                Result = "Timelapse will pre-emptively shut down to ensure minimal data loss." +
+                         $"[br]You should not suffer any data loss except, perhaps, the very last operation.",
+                Solution = "[ni] [e]Restart Timelapse[/e]. This may be a temporary issue, where you can pick up where you left off. " +
+                           "[ni] [e]If the problem persists:[/e]" +
+                           "[li 2] check to see which of the reasons in the [e]Details[/e] section could be causing it," +
+                           $"[li 2] {emailSaulForHelp}. "
+            };
+            if (false == string.IsNullOrWhiteSpace(message))
+            {
+                dialog.Solution += $"[li 2] include this information in the email: [e]{message}[/e]";
+            }
+            // "Restart Timelapse" via ExtraButton — closes the dialog without setting DialogResult (returns null)
+            dialog.ExtraButton.Content = "Restart Timelapse";
+            dialog.ExtraButton.Width = double.NaN;
+            dialog.ExtraButton.Padding = new Thickness(10, 0, 10, 0);
+            dialog.ExtraButton.Visibility = Visibility.Visible;
+            dialog.ExtraButton.Click += (_, _) => dialog.Close();
+
+            // Rename OK to "Shutdown without Restarting" — remains the default (Enter key) action
+            dialog.OkButton.Content = "Shutdown without Restarting";
+            dialog.OkButton.Width = double.NaN;
+            dialog.OkButton.Padding = new Thickness(10, 0, 10, 0);
+
+            FormattedDialogHelper.SetupStaticReferenceResolver(dialog);
+            bool? result = dialog.BuildAndShowDialog();
+
+            if (result != true)
+            {
+                // User chose Restart — launch a new instance before shutting down,
+                // passing the current file path so Timelapse reopens where it left off.
+                string processPath = Environment.ProcessPath ?? string.Empty;
+                if (!string.IsNullOrEmpty(processPath))
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo { FileName = processPath, UseShellExecute = true };
+                    if (!string.IsNullOrEmpty(filePath))
+                    {
+                        psi.ArgumentList.Add(filePath);
+                    }
+                    System.Diagnostics.Process.Start(psi);
+                }
+            }
+            Application.Current.Shutdown();
+        }
+        #endregion
+
+        #region TimelapseReadErrorNoticeDialog
+        public static void TimelapseReadErrorNoticeDialog(Window owner, SqlOperationResult result, string context, Action onClose = null)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            if (!owner.Dispatcher.CheckAccess())
+            {
+                owner.Dispatcher.BeginInvoke(() => TimelapseReadErrorNoticeDialog(owner, result, context, onClose));
+                return;
+            }
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = "Warning: a database read error occurred",
+                Icon = DialogIconType.Warning,
+                Problem = "Timelapse tried to read data from your database, but an error occurred." +
+                          (string.IsNullOrWhiteSpace(context) ? string.Empty : $"[br][b]Operation:[/b] {context}"),
+                Reason = "This can happen when:" +
+                         "[li] a network or OneDrive glitch temporarily blocked access to the file," +
+                         "[li] the database file was temporarily locked by another process," +
+                         "[li] the file is on a removable drive that was briefly disconnected.",
+                Result = "The operation that just completed may have returned incomplete or inaccurate data." +
+                         "[br]No data was modified.",
+                Solution = "[ni] [e]Retry the operation.[/e] Transient errors usually resolve on their own." +
+                           "[ni] If the problem persists, restart Timelapse.",
+            };
+            if (result?.Exception != null)
+            {
+                dialog.Details = $"[b]Error message:[/b] {result.ErrorMessage}" +
+                                 $"[br][b]Exception:[/b] {result.Exception.Message}";
+            }
+            FormattedDialogHelper.SetupStaticReferenceResolver(dialog);
+            dialog.BuildAndShowDialog();
+            SQLiteWrapper.ResetAllReadErrorState();
+            onClose?.Invoke();
+        }
+        #endregion
+
+        #region TimelapseOperationRetryDialog
+        // Shown when a write/repair operation fails after its own automatic short retry budget
+        // (~2.5s, inside Database.Update/ExecuteNonQueryWithRollback) has already been exhausted.
+        // Offers exactly one more, consciously-chosen retry before the caller falls back to the
+        // fatal TimelapseNeedsToShutDownDataWriteErrorDialog. Returns true only if the user
+        // clicked Retry; closing the dialog returns null, which the caller should treat the same
+        // as "proceed to the fatal dialog."
+        public static bool? TimelapseOperationRetryDialog(Window owner, string operationDescription, SqlOperationResult result)
+        {
+            ThrowIf.IsNullArgument(owner, nameof(owner));
+            var dialog = new FormattedDialog(MessageBoxButtonType.OK)
+            {
+                Owner = owner,
+                DialogTitle = "Warning: a database write error occurred",
+                Icon = DialogIconType.Warning,
+                Problem = $"Timelapse tried to {operationDescription}, but an error occurred.",
+                Reason = "This can happen when:" +
+                         "[li] a network or OneDrive glitch temporarily blocked access to the file," +
+                         "[li] the database file was temporarily locked by another process," +
+                         "[li] the file is on a removable drive that was briefly disconnected.",
+                Result = "Timelapse already retried automatically for a few seconds without success." +
+                         "[br]You can try once more now, or close this dialog to let Timelapse handle it as a more serious problem.",
+                Solution = "[ni] [e]Retry[/e] to try the operation one more time." +
+                           "[ni] If it fails again, Timelapse will show further options.",
+            };
+            if (result?.Exception != null)
+            {
+                dialog.Details = $"[b]Error message:[/b] {result.ErrorMessage}" +
+                                 $"[br][b]Exception:[/b] {result.Exception.Message}";
+            }
+            dialog.OkButton.Content = "Retry";
+            FormattedDialogHelper.SetupStaticReferenceResolver(dialog);
             return dialog.BuildAndShowDialog();
         }
         #endregion

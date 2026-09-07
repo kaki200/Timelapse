@@ -69,6 +69,28 @@ namespace Timelapse.Constant
         public static readonly SolidColorBrush MintyGreen = new(Color.FromArgb(255, 200, 251, 200));
         public static readonly SolidColorBrush VeryLightGrey = Brushes.Gainsboro;
         public static readonly SolidColorBrush PaleWhite = Brushes.Ivory;
+        public static readonly SolidColorBrush VeryDarkGray = new(Color.FromRgb(58, 58, 58));
+
+        public static class Notification
+        {
+            public static readonly SolidColorBrush BackgroundInformation = new(Color.FromRgb(217, 237, 247));
+            public static readonly SolidColorBrush BackgroundSuccess     = new(Color.FromRgb(223, 240, 216));
+            public static readonly SolidColorBrush BackgroundWarning     = new(Color.FromRgb(252, 248, 227));
+            public static readonly SolidColorBrush BackgroundError       = new(Color.FromRgb(248, 215, 218));
+            public static readonly SolidColorBrush BackgroundNeutral     = new(Color.FromRgb(248, 249, 250));
+
+            public static readonly SolidColorBrush BorderInformation = new(Color.FromRgb(174, 213, 129));
+            public static readonly SolidColorBrush BorderSuccess      = new(Color.FromRgb(155, 204, 145));
+            public static readonly SolidColorBrush BorderWarning      = new(Color.FromRgb(255, 193,   7));
+            public static readonly SolidColorBrush BorderError        = new(Color.FromRgb(220,  53,  69));
+            public static readonly SolidColorBrush BorderNeutral      = new(Color.FromRgb(108, 117, 125));
+
+            public static readonly SolidColorBrush ForegroundInformation = new(Color.FromRgb( 13, 110, 180));
+            public static readonly SolidColorBrush ForegroundSuccess      = new(Color.FromRgb( 25, 135,  84));
+            public static readonly SolidColorBrush ForegroundWarning      = new(Color.FromRgb(102,  77,   3));
+            public static readonly SolidColorBrush ForegroundError        = new(Color.FromRgb(114,  28,  36));
+            public static readonly SolidColorBrush ForegroundNeutral      = new(Color.FromRgb( 33,  37,  41));
+        }
     }
     public static class Control
     {
@@ -279,7 +301,7 @@ namespace Timelapse.Constant
         public const string VersionNumberMinimum = "2.3.0.0"; // Earlier versions than this requires a special software update to the database files as done via DialogUpgradeFils.dll
         public const string VersionNumberBackwardsCompatible = "2.3.3.0"; // The earliest version known to be backwards compatible with this database
         public const string VersionNumberBackwardsCompatibleForTemplates = "2.3.0.0"; // The earliest version known to be backwards compatible with this database
-        public const string VersionPatchNumber = "-patch2"; // If this version is patched, the patch number (or Beta indications).. Should be updated whenever new versions are release. Use "." or "-patch #." 
+        public const string VersionPatchNumber = "-Patch2"; // If this version is patched, the patch number (or Beta indications).. Should be updated whenever new versions are release. Use "." or "-patch #."
         public const string DefaultSortTerms = "[ { \"DataLabel\":\"RelativePath\", \"DisplayLabel\":\"RelativePath\", \"ControlType\":\"RelativePath\", \"IsAscending\":\"true\" }, { \"DataLabel\":\"DateTime\", \"DisplayLabel\":\"DateTime\", \"ControlType\":\"DateTime\", \"IsAscending\":\"true\" } ]";
         public const string DefaultSearchTerms = "{}";
         public const string DefaultQuickPasteJSON = "[]";
@@ -321,7 +343,7 @@ namespace Timelapse.Constant
         public const string SearchTerms = "SearchTerms";              // a JSON description storing the current search terms
         public const string BoundingBoxDisplayThreshold = "BBDisplayThreshold";
         public const string Standard = "Standard";
-
+        
         // other columns found in Old XML files
         public const string Data = "Data";                 // the data describing the attributes of that control
         public const string Image = "Image";               // A single image and its associated data
@@ -476,6 +498,9 @@ namespace Timelapse.Constant
         public static readonly TimeSpan BackupInterval = TimeSpan.FromMinutes(30);
 
         public const string TraceFile = "TimelapseErrorReport.txt"; // File name for file containing debug information. Usually written in the same folder containing the template.
+        public const string LogFile = "TimelapseErrorLog.txt"; // Persistent error/warning log written to %LocalAppData%\Timelapse\ErrorLogs\.
+        public const string LogFolder = "Timelapse"; // Sub-folder under %LocalAppData% that holds the ErrorLogs sub-folder.
+        public const string LogSubFolder = "ErrorLogs"; // Sub-folder under %LocalAppData%\Timelapse\ that holds the log file, so it's easy to spot amongst the program's other files.
     }
 
     // Default settings for the FilePlayer
@@ -649,6 +674,7 @@ namespace Timelapse.Constant
         public const string CSVDateTimeOptions = "CSVDateTimeOptions2";
         public const string CSVInsertSpaceBeforeDates = "CSVInsertSpaceBeforeDates";
         public const string CSVIncludeFolderColumn = "CSVIncludeFolderColumns";
+        public const string CSVUseASCIIEncoding = "CSVUseASCIIEncoding";
 
         // DarkPixelThreshold and Ratio used to determine image darkness
         public const string DarkPixelThreshold = "DarkPixelThreshold";
@@ -700,6 +726,7 @@ namespace Timelapse.Constant
         public const string SuppressSelectedPopulateFieldFromMetadataPrompt = "SuppressSelectedPopulateFieldFromMetadataPrompt";
         public const string SuppressSelectedRereadDatesFromFilesPrompt = "SuppressSelectedRereadDatesFromFilesPrompt";
         public const string SuppressShortcutDetectedPrompt = "SuppressShortcutDetectedPrompt";
+        public const string SuppressSwitchBetweenTimelapseAndEditorWarning = "SuppressSwitchBetweenTimelapseAndEditorWarning";
         public const string SuppressWarningToUpdateDBFilesToSQLPrompt = "SuppressWarningToUpdateDBFilesToSQL";
 
         // TabOrderInclude
@@ -754,15 +781,21 @@ namespace Timelapse.Constant
         public const int MaximumRenderAttempts = 10;
 
         public static readonly TimeSpan PollIntervalForVideoLoad = TimeSpan.FromMilliseconds(1.0);
-        public static readonly TimeSpan RenderingBackoffTime = TimeSpan.FromMilliseconds(25.0);
         public static readonly TimeSpan ProgressBarSleepInterval = TimeSpan.FromMilliseconds(10.0);
         public static readonly TimeSpan DataGridTimerInterval = TimeSpan.FromMilliseconds(250);
         public static readonly TimeSpan ProgressBarRefreshInterval = TimeSpan.FromMilliseconds(250);
+
+        // Opt-in BUSY/LOCKED retry budget for background-thread database writes (bulk updates/deletes,
+        // recognition counting, merge/checkout, ID-reset-and-vacuum). Passing this as busyTimeoutMs to
+        // ExecuteNonQueryWithRollback both sets SQLite's own busy handler and extends the outer retry
+        // ceiling in ExecuteNonQueryWithRollbackCore — helps ride out contention on a slow network
+        // share. Do not use on UI-thread-synchronous call sites, where a multi-second wait would freeze
+        // the UI with no indication anything is happening.
+        public const int BackgroundWriteExtendedBusyTimeoutMs = 3000;
     }
 
     public static class ThumbnailGrid
     {
-        public static readonly int MaxRows = 15;
         public static readonly double AspectRatioDefault = 1.77777777777778;
         public static readonly double MinumumThumbnailHeight = 96;
     }
@@ -940,6 +973,8 @@ namespace Timelapse.Constant
         public const string ClassifierUnknown = "ecosystem1_unknown_version";
         public const string ClassificationCompletionTimeUnknown = "unknown";
         public const string FormatVersionUnknown = "";
+
+        public const string UnknownClassificationLabel = "unknownClassification";
     }
 
     public static class ClassificationColumns

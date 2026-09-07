@@ -61,7 +61,9 @@ namespace Timelapse
                     DataHandler.IsProgrammaticControlUpdate = true;
                     counter.SetContentAndTooltip(newCounterData);
                     DataHandler.IsProgrammaticControlUpdate = false;
-                    DataHandler.FileDatabase.UpdateFile(DataHandler.ImageCache.Current.ID, counter.DataLabel, newCounterData);
+                    // Fire-and-forget: avoids blocking the UI thread on a database write while tagging
+                    // (this event handler fires synchronously on every marker add/delete).
+                    _ = DataHandler.FileDatabase.UpdateFileAsync(DataHandler.ImageCache.Current.ID, counter.DataLabel, newCounterData);
                 }
             }
 
@@ -89,7 +91,7 @@ namespace Timelapse
             if (markersForCounter != null)
             {
                 markersForCounter.RemoveMarker(e.Marker);
-                if (0 == markersOnCurrentFile.Count(x => x.Markers.Count > 0))
+                if (!markersOnCurrentFile.Any(x => x.Markers.Count > 0))
                 {
                     DataHandler.FileDatabase.MarkersRemoveMarkerRow(DataHandler.ImageCache.Current.ID);
                 }
@@ -137,7 +139,9 @@ namespace Timelapse
 
                 string counterContent = count.ToString();
                 DataHandler.IsProgrammaticControlUpdate = true;
-                DataHandler.FileDatabase.UpdateFile(DataHandler.ImageCache.Current.ID, counter.DataLabel, counterContent);
+                // Fire-and-forget: avoids blocking the UI thread on a database write while tagging
+                // (this event handler fires synchronously on every marker add/delete).
+                _ = DataHandler.FileDatabase.UpdateFileAsync(DataHandler.ImageCache.Current.ID, counter.DataLabel, counterContent);
                 counter.SetContentAndTooltip(counterContent);
                 DataHandler.IsProgrammaticControlUpdate = false;
 
@@ -146,7 +150,7 @@ namespace Timelapse
 
                 // Insert markers into the MarkersTable if all markers are empty,
                 // which should only occur if the current file has no markers associated with it.
-                if (0 == markersOnCurrentFile.Count(e => e.Markers.Count > 0))
+                if (!markersOnCurrentFile.Any(e => e.Markers.Count > 0))
                 {
                     // As there is no row in the marker table with that ID, an empty row (with [] values) will be added to the database
                     // The Markers list held by the database will be updated accordingly after this IF section

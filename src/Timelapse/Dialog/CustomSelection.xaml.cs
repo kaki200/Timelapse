@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -50,6 +51,7 @@ namespace Timelapse.Dialog
         // Detections variables
         private bool dontInvoke;
         private bool dontCount;
+        private CancellationTokenSource countCts = new();
 
         // Variables passed into constructor
         private readonly FileDatabase Database;
@@ -383,6 +385,7 @@ namespace Timelapse.Dialog
                 string[] termOperators;
 
                 // I prefer switch statements here for readability, but the IDE suggests a different syntax
+#pragma warning disable IDE0079 // Remove unnecessary suppression
 #pragma warning disable IDE0066
                 switch (controlType)
                 {
@@ -453,6 +456,8 @@ namespace Timelapse.Dialog
                         break;
                 }
 #pragma warning restore IDE0066
+#pragma warning restore IDE0079 // Remove unnecessary suppression
+
 
                 // term operator combo box
                 ComboBox operatorsComboBox = new()
@@ -897,11 +902,8 @@ namespace Timelapse.Dialog
         private void DestroyRecognitionSelectorControl()
         {
             // Remove the RecognitionSelector event handler
-            if (this.RecognitionSelector != null)
-            {
-                this.RecognitionSelector.RecognitionSelectionEvent -= RecognitionSelector_OnRecognitionSelectionEvent;
-                this.RecognitionSelector = null;
-            }
+            this.RecognitionSelector?.RecognitionSelectionEvent -= RecognitionSelector_OnRecognitionSelectionEvent;
+            this.RecognitionSelector = null;
             this.RecognitionsGroupBox.BorderThickness = new(0);
             this.RecognitonsGroupBoxHeaderText.FontWeight = FontWeights.Normal;
             this.RecognitionsGroupBox.Content = null;
@@ -957,10 +959,10 @@ namespace Timelapse.Dialog
             while (lo < hi)
             {
                 int mid = (lo + hi + 1) / 2;
-                if (Measure(text.Substring(0, mid)) <= targetWidth) lo = mid;
+                if (Measure(text[..mid]) <= targetWidth) lo = mid;
                 else hi = mid - 1;
             }
-            return lo == 0 ? ellipsis : text.Substring(0, lo) + ellipsis;
+            return lo == 0 ? ellipsis : text[..lo] + ellipsis;
         }
 
         private static string ComposeRecognitionsSelectionFeedback(string detectionCategory, List<string> classificationCategories, string selectedTaxonNode)
@@ -998,14 +1000,8 @@ namespace Timelapse.Dialog
                 Database.CustomSelection.UseTimeInsteadOfDate = cb.IsChecked == true;
 
                 // The DateTime label should reflect the state
-                if (dateTimeLabel1 != null)
-                {
-                    dateTimeLabel1.Text = cb.IsChecked == true ? "Time" : "Date";
-                }
-                if (dateTimeLabel2 != null)
-                {
-                    dateTimeLabel2.Text = cb.IsChecked == true ? "Time" : "Date";
-                }
+                dateTimeLabel1?.Text = cb.IsChecked == true ? "Time" : "Date";
+                dateTimeLabel2?.Text = cb.IsChecked == true ? "Time" : "Date";
 
                 // The DateTime control should reflect the state by displaying Time or Date only input
                 if (dateTimeControl1 != null)
@@ -1759,17 +1755,32 @@ namespace Timelapse.Dialog
         #endregion
 
         #region Common to Selections and Detections
-        private void CountTimer_Tick(object sender, EventArgs e)
+        private async void CountTimer_Tick(object sender, EventArgs e)
         {
-            CountTimer.Stop();
-            // This is set everytime a selection is made
-            if (dontCount)
+            try
             {
-                return;
-            }
+                CountTimer.Stop();
+                // This is set everytime a selection is made
+                if (dontCount)
+                {
+                    return;
+                }
 
 
-            int count = Database.CountAllFilesMatchingSelectionCondition(FileSelectionEnum.Custom);
+                // Cancel any previous in-flight count query and start a fresh one.
+                // This prevents a backlog of queries when the user changes criteria rapidly.
+                await countCts.CancelAsync().ConfigureAwait(true);
+                countCts.Dispose();
+                countCts = new CancellationTokenSource();
+                CancellationToken token = countCts.Token;
+
+                int count = await Task.Run(
+                    () => Database.CountAllFilesMatchingSelectionCondition(FileSelectionEnum.Custom),
+                    token).ConfigureAwait(true);
+
+                // A newer query may have started while this one was running; discard stale results.
+                if (token.IsCancellationRequested) return;
+
             MatchingFilesCount.Text = count > 0 ? count.ToString() : "0";
             this.MatchingFilesCountLabel.Text = count == 1
                 ? " file matches your query"
@@ -1783,7 +1794,7 @@ namespace Timelapse.Dialog
             if (null != this.RecognitionSelector )
             {
                 this.RecognitionSelector.UpdateDisplayOfTotalFileCounts(MatchingFilesCount.Text);
-                if (this.RefreshRecognitionCountsRequired 
+                if (this.RefreshRecognitionCountsRequired
                     && false == this.Database.CustomSelection.ShowMissingDetections)
                 {
                     // await this.RecognitionSelector.RecognitionsRefreshCounts();
@@ -1811,7 +1822,7 @@ namespace Timelapse.Dialog
             //            // Must be  n:1 wbere n < 1
             //            this.QueryFileMatchNote.Text = "(files with no recognized entities or lower-probability recognitions)";
             //        }
-            //        else 
+            //        else
             //        {
             //            // Must be  n:m wbere n,m < 1
             //            this.QueryFileMatchNote.Text = "(files with lower-probability recognitions)";
@@ -1822,6 +1833,16 @@ namespace Timelapse.Dialog
             //        this.QueryFileMatchNote.Text = "(files with a recognized entity within the confidence range)";
             //    }
             //}
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the user changes criteria rapidly; a newer query is already running.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("CountTimer_Tick: Unexpected error during selection count.", ex);
+                TracePrint.CatchException(ex.Message);
+            }
         }
 
         // Start the timer that will show how many files match the current selection
@@ -1930,10 +1951,7 @@ namespace Timelapse.Dialog
             this.RelativePathControlRepopulateIfNeeded();
             this.treeViewWithRelativePaths.FocusSelection = true;
             this.RelativePathButton.IsEnabled = this.treeViewWithRelativePaths.HasContent && checkboxforUsingRelativePath is { IsChecked: true };
-            if (checkboxforUsingRelativePath != null)
-            {
-                checkboxforUsingRelativePath.IsEnabled = this.treeViewWithRelativePaths.HasContent;
-            }
+            checkboxforUsingRelativePath?.IsEnabled = this.treeViewWithRelativePaths.HasContent;
             this.treeViewWithRelativePaths.SelectedItemChanged += RelativePathControl_SelectedItemChanged;
             RelativePathButton.GotFocus += ControlsDataHelpers.Control_GotFocus;
             RelativePathButton.LostFocus += ControlsDataHelpers.Control_LostFocus;

@@ -6,7 +6,7 @@ using Timelapse.DebuggingSupport;
 
 namespace Timelapse.Util
 {
-    internal class NativeMethods
+    internal partial class NativeMethods
     {
         #region Public Methods - Cursor Position
         /// <summary>
@@ -41,14 +41,14 @@ namespace Timelapse.Util
         // Conversions between Pixels and device-independent pixels
         // Note that this depends on the DPI settings of the display. 
         // Typical dpi settings are 96dpi (which means the two are equivalent), but this is not always the case.
-        [DllImport("gdi32.dll")]
-        private static extern int GetDeviceCaps(IntPtr hDc, int nIndex);
+        [LibraryImport("gdi32.dll")]
+        private static partial int GetDeviceCaps(IntPtr hDc, int nIndex);
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
+        [LibraryImport("user32.dll")]
+        private static partial IntPtr GetDC(IntPtr hWnd);
 
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
+        [LibraryImport("user32.dll")]
+        private static partial int ReleaseDC(IntPtr hWnd, IntPtr hDc);
         private const int LOGPIXELSX = 88;
         private const int LOGPIXELSY = 90;
         #endregion
@@ -98,9 +98,19 @@ namespace Timelapse.Util
             public Int32 Y;
         }
 
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetCursorPos(ref Win32Point pt);
+        [LibraryImport("user32.dll")]
+        private static partial void GetCursorPos(ref Win32Point pt);
+
+        // VK_CONTROL = 0x11; high bit set means key is currently down.
+        [LibraryImport("user32.dll")]
+        private static partial short GetKeyState(int nVirtKey);
+        #endregion
+
+        #region Public Methods - Keyboard State
+        // Returns true if either Ctrl key is physically down at the time of the current Win32 message.
+        // More reliable than Keyboard.Modifiers when the window does not have keyboard focus
+        // (e.g., WM_MOUSEWHEEL routed to an inactive window by Windows "scroll inactive windows" feature).
+        public static bool IsCtrlKeyDown() => (GetKeyState(0x11) & 0x8000) != 0;
         #endregion
 
         #region Unused: TransformDeviceIndependentPixelsToPixels

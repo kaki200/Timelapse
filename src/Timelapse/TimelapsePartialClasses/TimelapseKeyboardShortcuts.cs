@@ -190,7 +190,7 @@ namespace Timelapse
 
                 case Key.K:
                     // Dogear the current image or switch between the dogear and the last seen image
-                    if (this.MarkableCanvas.IsThumbnailGridVisible)
+                    if (this.MarkableCanvas.IsThumbnailGridVirtualizedVisible)
                     {
                         return;
                     }
@@ -346,6 +346,19 @@ namespace Timelapse
                     if (IsDisplayingMultipleImagesInOverview())
                     {
                         // Go to next row in the overview
+                        FilePlayer.Direction = up ? DirectionEnum.Previous : DirectionEnum.Next;
+                        if (IsCondition.IsKeyShiftDown())
+                        {
+                            FilePlayer_ScrollPage();
+                        }
+                        else
+                        {
+                            FilePlayer_ScrollRow();
+                        }
+                    }
+                    else if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
+                    {
+                        // Go to next/previous row or page in the virtual grid
                         FilePlayer.Direction = up ? DirectionEnum.Previous : DirectionEnum.Next;
                         if (IsCondition.IsKeyShiftDown())
                         {

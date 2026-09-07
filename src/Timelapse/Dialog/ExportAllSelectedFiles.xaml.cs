@@ -2,10 +2,8 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using Timelapse.Constant;
 using Timelapse.Database;
 using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
@@ -196,7 +194,6 @@ namespace Timelapse.Dialog
                     int percentDone = Convert.ToInt32((copiedFiles + skippedFiles) / Convert.ToDouble(totalFiles) * 100.0);
                     Progress.Report(new(percentDone,
                         $"Copying {copiedFiles} / {totalFiles} files", true, false));
-                    Thread.Sleep(ThrottleValues.RenderingBackoffTime);
                 }
             }).ConfigureAwait(true);
 

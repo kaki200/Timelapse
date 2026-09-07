@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using Timelapse.Constant;
@@ -113,7 +112,7 @@ namespace Timelapse.Dialog
         }
         private void Done_Click(object sender, RoutedEventArgs e)
         {
-            ImageMetadataOnLoad.SelectedImageMetadataDataLabels = MetadataGrid.SelectedMetadata.ToList();
+            ImageMetadataOnLoad.SelectedImageMetadataDataLabels = [.. MetadataGrid.SelectedMetadata];
             ImageMetadataOnLoad.MetadataToolSelected = MetadataGrid.MetadataToolSelected;
             DialogResult = true;
         }

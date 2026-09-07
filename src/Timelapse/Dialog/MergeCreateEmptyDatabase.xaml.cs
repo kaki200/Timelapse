@@ -40,18 +40,6 @@ namespace Timelapse.Dialog
         #endregion
 
         #region Do Create Empty Database
-        private async void DoCreateEmptyDatabase()
-        {
-            try
-            {
-                await DoCreateEmptyDatabaseAsync();
-            }
-            catch (Exception ex)
-            {
-                TracePrint.CatchException(ex.Message);
-            }
-        }
-
         private async Task DoCreateEmptyDatabaseAsync()
         {
             string message;
@@ -142,19 +130,27 @@ namespace Timelapse.Dialog
                 : Path.Combine(Path.GetDirectoryName(TemplateTdbPath), Path.GetFileNameWithoutExtension(TemplateTdbPath));
             CreateEmptyButton.IsEnabled = !string.IsNullOrWhiteSpace(TemplateTdbPath); // Enable the button only if a folder was specified
         }
-        private void CreateEmptyButton_Click(object sender, RoutedEventArgs e)
+        private async void CreateEmptyButton_Click(object sender, RoutedEventArgs e)
         {
-            // Warn the user if ddb file already exists in that folder
-            // ReSharper disable once AssignNullToNotNullAttribute
-            if (Directory.GetFiles(Path.GetDirectoryName(TemplateTdbPath), "*" + File.FileDatabaseFileExtension).Length > 0)
+            try
             {
-                if (false == Dialogs.MergeWarningCreateEmptyDdbFileExists(this))
+                // Warn the user if ddb file already exists in that folder
+                // ReSharper disable once AssignNullToNotNullAttribute
+                if (Directory.GetFiles(Path.GetDirectoryName(TemplateTdbPath), "*" + File.FileDatabaseFileExtension).Length > 0)
                 {
-                    DialogResult = false;
-                    return;
+                    if (false == Dialogs.MergeWarningCreateEmptyDdbFileExists(this))
+                    {
+                        DialogResult = false;
+                        return;
+                    }
                 }
+                await DoCreateEmptyDatabaseAsync();
             }
-            DoCreateEmptyDatabase();
+            catch (Exception ex)
+            {
+                AppLog.Error("CreateEmptyButton_Click: Unexpected error creating empty database.", ex);
+                TracePrint.CatchException(ex.Message);
+            }
         }
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {

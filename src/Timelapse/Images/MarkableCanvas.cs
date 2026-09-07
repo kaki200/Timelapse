@@ -19,8 +19,6 @@ using Timelapse.Enums;
 using Timelapse.EventArguments;
 using Timelapse.Util;
 using TimelapseWpf.Toolkit;
-using ThumbnailGrid = Timelapse.Controls.ThumbnailGrid;
-
 namespace Timelapse.Images
 {
     /// <summary>
@@ -51,16 +49,16 @@ namespace Timelapse.Images
         }
 
         /// <summary>
-        /// Gets the grid containing a multitude of zoomed out images
+        /// Gets the virtualized scrollable thumbnail grid
         /// </summary>
-        public ThumbnailGrid ThumbnailGrid { get; }
+        public ThumbnailGridVirtualized ThumbnailGridVirtualized { get; }
 
         public DataEntryControls DataEntryControls
         {
             get;
             set
             {
-                ThumbnailGrid.DataEntryControls = value;
+                ThumbnailGridVirtualized.DataEntryControls = value;
                 field = value;
             }
         }
@@ -76,9 +74,9 @@ namespace Timelapse.Images
         public Image ImageToMagnify { get; }
 
         /// <summary>
-        /// Whether the thumbnail grid is visible or not
+        /// Whether the virtualized thumbnail grid is visible or not
         /// </summary>
-        public bool IsThumbnailGridVisible => ThumbnailGrid.Visibility == Visibility.Visible;
+        public bool IsThumbnailGridVirtualizedVisible => ThumbnailGridVirtualized.Visibility == Visibility.Visible;
 
         /// <summary>
         /// Gets or sets a value indicating whether the magnifying glass is generally visible or hidden, and returns its state
@@ -121,7 +119,7 @@ namespace Timelapse.Images
         /// </summary>
         public double ZoomMaximum { get; set; }
 
-        public bool isZooming => IsThumbnailGridVisible || Math.Abs(imageToDisplayScale.ScaleX) - 1 > 1e-5;
+        public bool IsZooming => IsThumbnailGridVirtualizedVisible || Math.Abs(imageToDisplayScale.ScaleX) - 1 > 1e-5;
 
         #endregion
 
@@ -155,8 +153,6 @@ namespace Timelapse.Images
         // Timer for resizing the ThumbnailGrid only after resizing is (likely) completed
         private readonly DispatcherTimer timerResize = new();
 
-        // Timer for delaying updates in the midst of rapid navigation with the slider
-        private readonly DispatcherTimer timerSlider = new();
 
         // markers
         private List<Marker> markers;
@@ -179,7 +175,15 @@ namespace Timelapse.Images
         // Whether to force updating on an image with ImageProcessing settings (if that control is visible) whenever a new image is displayed
         private bool forceImageProcessingUpdate;
 
+        // Dedicated lock object for zoom/pan operations.
+        // Replaces the previous pattern of lock(ImageToDisplay), lock(VideoPlayer), and lock(ThumbnailGrid),
+        // which used WPF UI elements as monitor objects — an anti-pattern since WPF controls have
+        // thread affinity and should never be used as lock targets.
+        private readonly System.Threading.Lock _zoomLock = new();
+
         private bool isRefreshBoundingBoxesPending;
+        private DateTime ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+        private DateTime lastZoomChangeTime = DateTime.MinValue;
         #endregion
 
         #region Events
@@ -254,16 +258,35 @@ namespace Timelapse.Images
             SetTop(VideoPlayer, 0);
             Children.Add(VideoPlayer);
 
-            // Set up zoomed out grid showing multitude of images
-            ThumbnailGrid = new()
+            // Set up virtualized scrollable thumbnail grid
+            ThumbnailGridVirtualized = new()
             {
                 Visibility = Visibility.Collapsed
             };
 
-            SetZIndex(ThumbnailGrid, 1000); // High Z-index so that it appears above other objects and magnifier
-            SetLeft(ThumbnailGrid, 0);
-            SetTop(ThumbnailGrid, 0);
-            Children.Add(ThumbnailGrid);
+            SetZIndex(ThumbnailGridVirtualized, 1000);
+            SetLeft(ThumbnailGridVirtualized, 0);
+            SetTop(ThumbnailGridVirtualized, 0);
+            Children.Add(ThumbnailGridVirtualized);
+
+            // ScrollViewer inside ThumbnailGridVirtualized blocks all WheelEvents from bubbling,
+            // so Ctrl+scroll cannot reach ImageOrCanvas_MouseWheel naturally. The grid raises this
+            // event explicitly; we forward it to TryZoomInOrOutVirtualized with the same de-bounce.
+            ThumbnailGridVirtualized.CtrlMouseWheelScrolled += (_, wheelArgs) =>
+            {
+                TimeSpan diff = DateTime.Now - lastMouseWheelDateTime;
+                if (diff >= TimeSpan.FromMilliseconds(500))
+                {
+                    lastMouseWheelDateTime = DateTime.Now;
+                    TryZoomInOrOutVirtualized(wheelArgs.Delta > 0);
+                }
+            };
+            ThumbnailGridVirtualized.DeactivateRequested += (_, _) =>
+            {
+                ThumbnailGridVirtualized.Reset();
+                if (displayingImage) SwitchToImageView();
+                else SwitchToVideoView();
+            };
 
             // set up image to magnify
             ImageToMagnify = new()
@@ -303,10 +326,6 @@ namespace Timelapse.Images
             // When started, refreshes the ThumbnailGrid after 100 msecs (unless the timer is reset or stopped)
             timerResize.Interval = TimeSpan.FromMilliseconds(200);
             timerResize.Tick += TimerResize_Tick;
-
-            // When started, refreshes the ThumbnailGrid after 100 msecs (unless the timer is reset or stopped)
-            timerSlider.Interval = TimeSpan.FromMilliseconds(200);
-            timerSlider.Tick += TimerSlider_Tick;
 
             // Default to the image view, as it will be all black
             ImageToDisplay.Visibility = Visibility.Visible;
@@ -409,13 +428,9 @@ namespace Timelapse.Images
             displayingImage = true;
 
             // ensure display image is visible
-            if (ThumbnailGrid.IsGridActive == false)
+            if (!IsThumbnailGridVirtualizedVisible)
             {
                 SwitchToImageView();
-            }
-            else
-            {
-                SwitchToThumbnailGridView();
             }
         }
 
@@ -434,13 +449,9 @@ namespace Timelapse.Images
             VideoPlayer.SetSource(new(videoFile.FullName), fileIndex);
             displayingImage = false;
 
-            if (ThumbnailGrid.IsGridActive == false)
+            if (!IsThumbnailGridVirtualizedVisible)
             {
                 SwitchToVideoView();
-            }
-            else
-            {
-                SwitchToThumbnailGridView();
             }
 
             return true;
@@ -505,7 +516,7 @@ namespace Timelapse.Images
 
             // Scale the image, and at the same time translate it so that the 
             // point in the image under the cursor stays there
-            lock (ImageToDisplay)
+            lock (_zoomLock)
             {
                 double imageWidth = ImageToDisplay.Width * imageToDisplayScale.ScaleX;
                 double imageHeight = ImageToDisplay.Height * imageToDisplayScale.ScaleY;
@@ -551,7 +562,7 @@ namespace Timelapse.Images
             imageToDisplayTranslation.Y = 0.0;
             RedrawMarkers();
             RefreshBoundingBoxes();
-            if (ThumbnailGrid.Visibility == Visibility.Visible)
+            if (IsThumbnailGridVirtualizedVisible)
             {
                 SwitchToImageView();
             }
@@ -564,12 +575,23 @@ namespace Timelapse.Images
         {
             // a user may want to flip between completely zoomed out / normal pan settings and a saved zoom / pan setting that focuses in on a particular region
             // To do this, we save / restore the zoom pan settings of a particular view, or return to the default zoom/pan.
+            string toastMessage;
+            NotificationOptions toastOptions = new()
+            {
+                ShowCloseButton = true,
+                CloseAfter = 3000,
+            };
             if (Math.Abs(imageToDisplayScale.ScaleX - 1) < .0001 && Math.Abs(imageToDisplayScale.ScaleY - 1) < .0001)
             {
-                // If the scale is unzoomed, then don't bother saving it as it may just be the result of an unintended key press. 
-                return;
+                // If the scale is unzoomed, then don't bother saving it as it may just be the result of an unintended key press.
+                toastMessage = "No bookmark saved, as you are not zoomed in.";
             }
-            bookmark.Set(imageToDisplayScale, imageToDisplayTranslation);
+            else
+            {
+                bookmark.Set(imageToDisplayScale, imageToDisplayTranslation);
+                toastMessage = $"The current zoom and pan settings have been saved as a bookmark.";
+            }
+            GlobalReferences.MainWindow.ToastNotifier.ShowSuccess(toastMessage, toastOptions);
         }
 
         // This version sets the bookmark with the provided points (retrieved from the registry) indicating scale and translation saved from a previous session
@@ -611,12 +633,12 @@ namespace Timelapse.Images
             // Signal change in image state (consumed by ImageAdjuster. We check to make sure that its an actual image vs. a placeholder)
             GenerateImageStateChangeEvent(ImageToDisplay.Source != ImageValues.Corrupt.Value && ImageToDisplay.Source != ImageValues.FileNoLongerAvailable.Value);
 
-            if (IsThumbnailGridVisible == false)
+            if (IsThumbnailGridVirtualizedVisible == false)
             {
                 return;
             }
             // These operations are only needed if we weren't in the single image view
-            ThumbnailGrid.Visibility = Visibility.Collapsed;
+            ThumbnailGridVirtualized.Visibility = Visibility.Collapsed;
             Action OnSwitchedToSingleImageViewEventAction = SwitchedToSingleImageViewEventAction;
             if (OnSwitchedToSingleImageViewEventAction == null)
             {
@@ -641,12 +663,12 @@ namespace Timelapse.Images
 
             GenerateImageStateChangeEvent(false); //  Signal change in image state (consumed by ImageAdjuster)
 
-            if (IsThumbnailGridVisible == false)
+            if (IsThumbnailGridVirtualizedVisible == false)
             {
                 return;
             }
             // These operations are only needed if we weren't in the single image view
-            ThumbnailGrid.Visibility = Visibility.Collapsed;
+            ThumbnailGridVirtualized.Visibility = Visibility.Collapsed;
             Action OnSwitchedToSingleImageViewEventAction = SwitchedToSingleImageViewEventAction;
             if (OnSwitchedToSingleImageViewEventAction == null)
             {
@@ -662,35 +684,29 @@ namespace Timelapse.Images
             GlobalReferences.MainWindow.DuplicateDisplayIndicatorInImageIfWarranted();
         }
 
-        public void SwitchToThumbnailGridView()
+        #endregion
+
+        public void SwitchToThumbnailGridVirtualizedView()
         {
-            // No need to switch as we are already in it
-            if (IsThumbnailGridVisible)
-            {
-                return;
-            }
-            GenerateImageStateChangeEvent(false); //  Signal change in image state (consumed by ImageAdjuster, if it is visible)
-
-            ThumbnailGrid.Visibility = Visibility.Visible;
-            Action OnSwitchedToThumbnailGridViewEventAction = SwitchedToThumbnailGridViewEventAction;
-            if (OnSwitchedToThumbnailGridViewEventAction == null)
-            {
-                // Shouldn't happen
-                TracePrint.NullException(nameof(OnSwitchedToThumbnailGridViewEventAction));
-                return;
-            }
-            OnSwitchedToThumbnailGridViewEventAction();
-            
-
+            if (IsThumbnailGridVirtualizedVisible) return;
+            GenerateImageStateChangeEvent(false);
+            ThumbnailGridVirtualized.Visibility = Visibility.Visible;
             ImageToDisplay.Visibility = Visibility.Collapsed;
             SetMagnifiersAccordingToCurrentState(false, false);
             VideoPlayer.Visibility = Visibility.Collapsed;
             VideoPlayer.Pause();
-
-            // Hide the DuplicateIndicator for the main window
             GlobalReferences.MainWindow.DuplicateIndicatorInMainWindow.Visibility = Visibility.Collapsed;
+
+            Action onSwitched = SwitchedToThumbnailGridViewEventAction;
+            onSwitched?.Invoke();
         }
-        #endregion
+
+        public ThumbnailGridRefreshStatus RefreshThumbnailGridVirtualized(bool? zoomIn)
+        {
+            if (ThumbnailGridVirtualized == null)
+                return ThumbnailGridRefreshStatus.Aborted;
+            return ThumbnailGridVirtualized.Refresh(ThumbnailGridVirtualized.ActualWidth, ThumbnailGridVirtualized.ActualHeight, zoomIn);
+        }
 
         #region Public / Private methods: Draw Bounding Box
         // 
@@ -770,7 +786,7 @@ namespace Timelapse.Images
         public void MagnifierOrOffsetChangeZoomLevel(ZoomDirection zoomDirection)
         {
             // Process zoom requests only if the magnifiers are visible, and only when the particular image/video magnifier is being displayed
-            if (IsThumbnailGridVisible)
+            if (IsThumbnailGridVirtualizedVisible)
             {
                 return;
             }
@@ -839,7 +855,7 @@ namespace Timelapse.Images
         {
             magnifyingGlass.Show = showMagnifier && MagnifiersEnabled && displayingImage && IsMouseOverImage();
             // We can't show the offset lens on the scaled video, as scaling the video also scales the offset lens (at least, not until we fix it)!
-            OffsetLens.Show = showOffset & MagnifiersEnabled && displayingImage == false && VideoPlayer.IsUnScaled && IsThumbnailGridVisible == false && IsMouseOverVideo();
+            OffsetLens.Show = showOffset & MagnifiersEnabled && displayingImage == false && VideoPlayer.IsUnScaled && IsThumbnailGridVirtualizedVisible == false && IsMouseOverVideo();
         }
 
 
@@ -907,175 +923,142 @@ namespace Timelapse.Images
         }
         #endregion
 
-        #region Public / Private methods: ThumbnailGrid
-        // Zoom in (or out) of single image and/or overview 
+        #region Public / Private methods: ThumbnailGridVirtualized
+        // Zoom in or out of single image or video (< > keys and plain mouse-scroll path).
+        // TGV zoom is handled separately via TryZoomInOrOutVirtualized (Ctrl+scroll).
         public void TryZoomInOrOut(bool zoomIn, Point imageMousePosition, Point videoMousePosition)
         {
-            // Manage videos first
-            if (IsThumbnailGridVisible == false && ImageToDisplay.IsVisible == false)
+            if (IsThumbnailGridVirtualizedVisible) return;
+            if (!displayingImage)
             {
-                lock (VideoPlayer)
+                lock (_zoomLock)
                 {
-                    // Request Zoom out on a zoomed-in Video
                     if (zoomIn || VideoPlayer.IsUnScaled == false)
                     {
+                        ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
                         VideoPlayer.ScaleVideo(videoMousePosition, zoomIn);
                         SetMagnifiersAccordingToCurrentState(false, true);
-                        return;
+                        lastZoomChangeTime = DateTime.Now;
+                    }
+                    else  // scrolling out at minimum video zoom — mirror image behaviour
+                    {
+                        if (NativeMethods.IsCtrlKeyDown())
+                        {
+                            if (DateTime.Now - lastZoomChangeTime >= TimeSpan.FromMilliseconds(250))
+                            {
+                                ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+                                TryZoomInOrOutVirtualized(false);
+                            }
+                            else if (ctrlScrollOutAtMinZoomStartTime == DateTime.MinValue)
+                            {
+                                ctrlScrollOutAtMinZoomStartTime = DateTime.Now;
+                            }
+                            else if (DateTime.Now - ctrlScrollOutAtMinZoomStartTime >= TimeSpan.FromMilliseconds(250))
+                            {
+                                ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+                                TryZoomInOrOutVirtualized(false);
+                            }
+                        }
+                        else if (DateTime.Now - lastZoomChangeTime >= TimeSpan.FromMilliseconds(500))
+                        {
+                            lastZoomChangeTime = DateTime.Now;
+                            GlobalReferences.MainWindow?.ToastNotifier.ShowInformationByCursor("Use Ctrl-scrollwheel to display the overview at different sizes.");
+                        }
                     }
                 }
+                return;
             }
-            lock (ThumbnailGrid)
+            // At minimum zoom: apply per-modality behaviour then return without scaling.
+            if (!zoomIn && Math.Abs(imageToDisplayScale.ScaleX - Constant.MarkableCanvas.ImageZoomMinimum) < .0001)
             {
-                // Request Zoom out on either an unscaled image or the thumbnail grid. 
-                // Note on why this is ambiguous: if the thumbnail grid is visible, it means the (hidden) image is also unscaled
-                if (zoomIn == false && Math.Abs(imageToDisplayScale.ScaleX - Constant.MarkableCanvas.ImageZoomMinimum) < .0001)
+                if (NativeMethods.IsCtrlKeyDown())
                 {
-                    // Option 1. Request zoom out on Thumbnail Grid,
-                    //           Aborted as we are already at the maximum allowable steps on ThumbnailGrid
-                    //if (this.ThumbnailGridState >= Constant.ThumbnailGrid.MaxRows)
-                    //{
-                    //    return;
-                    //}
-
-                    // Option 2. Request zoom out on either the ThumbnailGrid an unscaled image. 
-                    bool isInitialSwitchToThumbnailGrid = ThumbnailGrid.IsGridActive;
-                    SwitchToThumbnailGridView();
-
-                    // Option 2a. We tried to refresh, but there isn't enough space available on the thumbnail grid.
-                    //            Thus try to zoom out again at the next zoom-out level
-                    ThumbnailGridRefreshStatus status = RefreshThumbnailGrid(false);
-                    if (status == ThumbnailGridRefreshStatus.NotEnoughSpaceForEvenOneCell)
+                    // Guard only applies when the user just arrived at min zoom via a continuous
+                    // Ctrl+scroll-out (lastZoomChangeTime is within the 250 ms window).
+                    // If the image has been at full size longer than that, activate TGV immediately.
+                    if (DateTime.Now - lastZoomChangeTime >= TimeSpan.FromMilliseconds(250))
                     {
-                        TryZoomInOrOut(false, imageMousePosition, videoMousePosition); // STOPPING CONDITION AT MINIMUM???
-                        return;
+                        ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+                        TryZoomInOrOutVirtualized(false);
                     }
-                    // Option 2b: Zoom out request denied.
-
-                    if (status == ThumbnailGridRefreshStatus.Aborted || status == ThumbnailGridRefreshStatus.AtMaximumZoomLevel)
+                    else if (ctrlScrollOutAtMinZoomStartTime == DateTime.MinValue)
                     {
-                        return;
+                        ctrlScrollOutAtMinZoomStartTime = DateTime.Now;
                     }
-
-                    // Option 2c. We've gone from the single image to the multi-image view.
-                    // By default, select the first item (as we want the data for the first item to remain displayed)
-                    if (isInitialSwitchToThumbnailGrid)
+                    else if (DateTime.Now - ctrlScrollOutAtMinZoomStartTime >= TimeSpan.FromMilliseconds(250))
                     {
-                        ThumbnailGrid.SelectInitialCellOnly();
-                        DataEntryControls.SetEnableState(ControlsEnableStateEnum.MultipleImageView, ThumbnailGrid.SelectedCount());
+                        ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+                        TryZoomInOrOutVirtualized(false);
                     }
                 }
-                else if (IsThumbnailGridVisible)
+                else if (DateTime.Now - lastZoomChangeTime >= TimeSpan.FromMilliseconds(500))
                 {
-                    // State: currently zoomed in on ThumbnailGrid, but not at the minimum step
-                    // Zoom in another step
-                    //this.ThumbnailGridState--;
-                    ThumbnailGridRefreshStatus status = RefreshThumbnailGrid(zoomIn);
-                    DataEntryControls.SetEnableState(ControlsEnableStateEnum.MultipleImageView, ThumbnailGrid.SelectedCount()); 
-                    if (status == ThumbnailGridRefreshStatus.NotEnoughSpaceForEvenOneCell)
-                    {
-                        // we couldn't refresh the grid, likely because there is not enough space available to show even a single image at this image state
-                        // So try again by zooming in another step
-                        TryZoomInOrOut(zoomIn, imageMousePosition, videoMousePosition);
-                    }
-                    else if (status == ThumbnailGridRefreshStatus.AtMaximumZoomLevel
-                        || status == ThumbnailGridRefreshStatus.Aborted)
-
-                    {
-                        // return;
-                    }
-                    else if (status == ThumbnailGridRefreshStatus.AtZeroZoomLevel)
-                    {
-                        if (displayingImage)
-                        {
-                            SwitchToImageView();
-                        }
-                        else
-                        {
-                            SwitchToVideoView();
-                        }
-                    }
+                    // Show hint after a natural pause at min zoom.
+                    // Reset lastZoomChangeTime immediately so rapid follow-up scrolls don't re-trigger
+                    // until the user pauses again.
+                    lastZoomChangeTime = DateTime.Now;
+                    GlobalReferences.MainWindow?.ToastNotifier.ShowInformationByCursor("Use Ctrl-scrollwheel to display the overview at different sizes.");
                 }
-                else if (IsThumbnailGridVisible)
-                {
-                    // State: zoomed in on ThumbnailGrid, but at the minimum step
-                    // Switch to the image or video, depending on what was last displayed
-                    // update the magnifying glass
-
-                    if (displayingImage)
-                    {
-                        SwitchToImageView();
-                    }
-                    else
-                    {
-                        SwitchToVideoView();
-                    }
-                }
-                else
-                {
-                    if (displayingImage)
-                    {
-                        // If we are zooming in off the image, then correct the mouse position to the edge of the image
-                        if (imageMousePosition.X > ImageToDisplay.ActualWidth)
-                        {
-                            imageMousePosition.X = ImageToDisplay.ActualWidth;
-                        }
-                        if (imageMousePosition.Y > ImageToDisplay.ActualHeight)
-                        {
-                            imageMousePosition.Y = ImageToDisplay.ActualHeight;
-                        }
-                        ScaleImage(imageMousePosition, zoomIn);
-                    }
-                }
+                return;
             }
-        }
-
-        // Refresh only the episode information in the thumbnail grid
-        public void DisplayEpisodeTextInThumbnailGridIfWarranted()
-        {
-            ThumbnailGrid.RefreshEpisodeTextIfWarranted();
-        }
-
-        // If the ThumbnailGrid is displayed, refresh it. Use a timer if the we are navigating via a slider (to avoid excessive refreshes)
-        public void RefreshIfMultipleImagesAreDisplayed(bool isInSliderNavigation)
-        {
-            if (IsThumbnailGridVisible)
+            // Image is not at min zoom (or zooming in): reset the hold-off timer and scale.
+            ctrlScrollOutAtMinZoomStartTime = DateTime.MinValue;
+            lock (_zoomLock)
             {
-                // State: zoomed in on ThumbnailGrid.
-                // Updating it ensures that the correct image is shown as the first cell
-                // However, if we are navigating with the slider, delay update as otherwise it can't keep up
-                if (isInSliderNavigation)
-                {
-                    // Refresh the ThumbnailGrid only via the timer, where it will 
-                    // try to refresh only when the user pauses (or ends) navigation via the slider
-                    timerSlider.Stop();
-                    timerSlider.Start();
-                }
-                else
-                {
-                    RefreshThumbnailGrid(null); // null signals a refresh at the current zoom level
-                }
+                if (imageMousePosition.X > ImageToDisplay.ActualWidth)
+                    imageMousePosition.X = ImageToDisplay.ActualWidth;
+                if (imageMousePosition.Y > ImageToDisplay.ActualHeight)
+                    imageMousePosition.Y = ImageToDisplay.ActualHeight;
+                ScaleImage(imageMousePosition, zoomIn);
             }
+            lastZoomChangeTime = DateTime.Now;
         }
 
-        // Refresh the ThumbnailGrid
-        public ThumbnailGridRefreshStatus RefreshThumbnailGrid(bool? zoomIn)
+        // Mirrors TryZoomInOrOut but routes to ThumbnailGridVirtualized.
+        // zoomIn=false → shrink cells (zoom out); zoomIn=true → grow cells (zoom in) until deactivated.
+        private void TryZoomInOrOutVirtualized(bool zoomIn)
         {
-            if (ThumbnailGrid == null)
+            if (zoomIn)
             {
-                return ThumbnailGridRefreshStatus.Aborted;
+                if (!IsThumbnailGridVirtualizedVisible) return;
+                ThumbnailGridRefreshStatus status = RefreshThumbnailGridVirtualized(true);
+                if (status == ThumbnailGridRefreshStatus.AtZeroZoomLevel)
+                {
+                    ThumbnailGridVirtualized.Reset();
+                    if (displayingImage) SwitchToImageView();
+                    else SwitchToVideoView();
+                }
+                // AnimatingToHome: reveal the home image behind the sliding grid so the destination
+                // is visible as the grid slides away. Full switch happens via DeactivateRequested.
+                if (status == ThumbnailGridRefreshStatus.AnimatingToHome)
+                    ImageToDisplay.Visibility = Visibility.Visible;
             }
-            // Find the current height of the available space and split it the number of rows defined by the state. i.e. state 1 is 2 rows, 2 is 3 rows, etc.
-            // However, if the resulting image is less than a minimum height, then ignore it.
-            //if (!resizing && cellHeight < Constant.ThumbnailGrid.MinumumThumbnailHeight) return ThumbnailGridRefreshStatus.AtMaximumZoomLevel;
+            else
+            {
+                bool isInitialSwitch = !IsThumbnailGridVirtualizedVisible;
+                if (isInitialSwitch)
+                {
+                    if (ThumbnailGridVirtualized.FileTable == null) return;
+                    SwitchToThumbnailGridVirtualizedView();
+                }
 
-                return ThumbnailGrid.Refresh(ThumbnailGrid.Width, ThumbnailGrid.Height, zoomIn);
-        }
-
-        private void TimerSlider_Tick(object sender, EventArgs e)
-        {
-            timerSlider.Stop();
-            RefreshThumbnailGrid(null); // null signals a refresh at the current zoom level
+                ThumbnailGridRefreshStatus status = RefreshThumbnailGridVirtualized(false);
+                if (status == ThumbnailGridRefreshStatus.NotEnoughSpaceForEvenOneCell)
+                {
+                    if (isInitialSwitch)
+                    {
+                        if (displayingImage) SwitchToImageView();
+                        else SwitchToVideoView();
+                    }
+                    return;
+                }
+                if (isInitialSwitch && status == ThumbnailGridRefreshStatus.Ok)
+                {
+                    ThumbnailGridVirtualized.SelectInitialCellOnly();
+                    DataEntryControls.SetEnableState(ControlsEnableStateEnum.MultipleImageView,
+                        ThumbnailGridVirtualized.SelectedCount());
+                }
+            }
         }
         #endregion
 
@@ -1298,41 +1281,35 @@ namespace Timelapse.Images
 
         private void ImageOrCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
         {
-            bool zoomIn = e.Delta > 0; // Zooming in if delta is positive, else zooming out
+            bool zoomIn = e.Delta > 0;
+            // Use Win32 GetKeyState rather than Keyboard.Modifiers: WM_MOUSEWHEEL can arrive while the
+            // window is inactive ("scroll inactive windows" feature), leaving WPF's modifier state stale.
+            bool ctrlDown = NativeMethods.IsCtrlKeyDown();
 
-            // Eliminate overly exuberant mouse wheel events
-            // Check the time interval between mouse wheel events. If below a threshold, ignore the event.
-            // 1. This manages rapid turns of the wheel that would otherwise cause over-shooting of desired zoom.
-            // 2. It introduces a longer time threshold to switch from the image to the ThumbnailGrid, in order to give a natural 'break point' between the two.
-            // 3. A windows 10 bug (so it seems) generates 2 mouse wheel events for every mouse wheel click
-            //    This tries to catch that and eliminate the second click. 
-
-            TimeSpan timeDifference = DateTime.Now - lastMouseWheelDateTime;
-            if (timeDifference < TimeSpan.FromMilliseconds(500)) // At least a 500 msecs delay in use of the scroll wheel is needed between transitions
+            // Ctrl+scroll in TGV: zoom TGV cells (debounced to avoid overshooting)
+            if (ctrlDown && IsThumbnailGridVirtualizedVisible)
             {
-                if (zoomIn &&
-                    ((ImageToDisplay.Visibility == Visibility.Visible && Math.Abs(imageToDisplayScale.ScaleX - Constant.MarkableCanvas.ImageZoomMinimum) < .0001)
-                     || (VideoPlayer.Visibility == Visibility.Visible && VideoPlayer.IsUnScaled)))
+                TimeSpan diff = DateTime.Now - lastMouseWheelDateTime;
+                if (diff >= TimeSpan.FromMilliseconds(500))
                 {
-                    // Pause on the transition from unzoomed image/video to zoomed image/video
-                    return;
+                    lastMouseWheelDateTime = DateTime.Now;
+                    TryZoomInOrOutVirtualized(zoomIn);
                 }
-
-                if (zoomIn == false &&
-                    ((ImageToDisplay.Visibility == Visibility.Visible && Math.Abs(imageToDisplayScale.ScaleX - Constant.MarkableCanvas.ImageZoomMinimum) < .0001)
-                      || (VideoPlayer.Visibility == Visibility.Visible && VideoPlayer.IsUnScaled)))
-                {
-                    // Pause on the transition from unscaled image/video to thumbnail Grid
-                    return;
-                }
+                e.Handled = true;
+                return;
             }
-            lastMouseWheelDateTime = DateTime.Now;
 
-            // Zoom in or out
+            // Dismiss the hint toast on any scroll that does something (zoom in, or Ctrl+scroll).
+            // Plain scroll-out is the only event that triggers the toast, so we leave it alone.
+            if (ctrlDown || zoomIn)
+                GlobalReferences.MainWindow?.ToastNotifier.Dismiss();
+
+            // Image/video view: no debounce — every scroll event is forwarded directly.
+            // Min-zoom behaviour (Ctrl counter, hint toast) is handled inside TryZoomInOrOut.
             Point imageMousePosition = e.GetPosition(ImageToDisplay);
             Point videoMousePosition = e.GetPosition(VideoPlayer.VideoCanvas);
             TryZoomInOrOut(zoomIn, imageMousePosition, videoMousePosition);
-            e.Handled = true; // As otherwise it may be invoked twice by both the marker and markable canvase
+            e.Handled = true;
         }
 
         // Hide the magnifying glass when the mouse cursor leaves the image
@@ -1360,11 +1337,11 @@ namespace Timelapse.Images
             VideoPlayer.Width = ActualWidth;
             VideoPlayer.Height = ActualHeight;
 
-            ThumbnailGrid.Width = ActualWidth;
-            ThumbnailGrid.Height = ActualHeight;
-            if (ThumbnailGrid.Visibility == Visibility.Visible)
+            ThumbnailGridVirtualized.Width = ActualWidth;
+            ThumbnailGridVirtualized.Height = ActualHeight;
+            if (ThumbnailGridVirtualized.Visibility == Visibility.Visible)
             {
-                // Refresh the ThumbnailGrid only via the timer, where it will 
+                // Refresh the ThumbnailGrid only via the timer, where it will
                 // try to refresh only if the SizeChanged event doesn't refire after the given interval i.e.,
                 // when the user pauses or completes the manual resizing action
                 timerResize.Stop();
@@ -1379,14 +1356,14 @@ namespace Timelapse.Images
             // this.bookmark.Reset();
         }
 
-        // Refresh the ThumbnailGrid when the timer fires 
+        // Refresh the TGV when the timer fires after a resize
         private void TimerResize_Tick(object sender, EventArgs e)
         {
             timerResize.Stop();
-            if (ThumbnailGridRefreshStatus.NotEnoughSpaceForEvenOneCell == RefreshThumbnailGrid(null)) // null signals a refresh at the current zoom level
+            if (IsThumbnailGridVirtualizedVisible)
             {
-                // We couldn't show at least one image in the overview, so go back to the normal view
-                SwitchToImageView();
+                if (ThumbnailGridRefreshStatus.NotEnoughSpaceForEvenOneCell == RefreshThumbnailGridVirtualized(null))
+                    SwitchToImageView();
             }
         }
 
@@ -1421,18 +1398,27 @@ namespace Timelapse.Images
         {
             switch (e.Key)
             {
-                case Key.OemPeriod:  // Key.>
-                    // zoom in
-                    Point imageMousePosition = Mouse.GetPosition(ImageToDisplay);
-                    Point videoMousePosition = Mouse.GetPosition(VideoPlayer.VideoCanvas);
-                    TryZoomInOrOut(true, imageMousePosition, videoMousePosition);
+                case Key.OemPeriod:  // . or >  — zoom in
+                    if (IsThumbnailGridVirtualizedVisible)
+                        TryZoomInOrOutVirtualized(true);
+                    else
+                    {
+                        Point imageMousePosition = Mouse.GetPosition(ImageToDisplay);
+                        Point videoMousePosition = Mouse.GetPosition(VideoPlayer.VideoCanvas);
+                        TryZoomInOrOut(true, imageMousePosition, videoMousePosition);
+                    }
                     break;
-                // zoom out // Key,>
-                case Key.OemComma:
-                    // zoom out
-                    Point imageMousePosition2 = Mouse.GetPosition(ImageToDisplay);
-                    Point videoMousePosition2 = Mouse.GetPosition(VideoPlayer.VideoCanvas);
-                    TryZoomInOrOut(false, imageMousePosition2, videoMousePosition2);
+                case Key.OemComma:  // , or <  — zoom out
+                    if (IsThumbnailGridVirtualizedVisible)
+                        TryZoomInOrOutVirtualized(false);
+                    else if (Math.Abs(imageToDisplayScale.ScaleX - Constant.MarkableCanvas.ImageZoomMinimum) < .0001)
+                        TryZoomInOrOutVirtualized(false);  // at full size: cross to TGV without requiring Ctrl
+                    else
+                    {
+                        Point imageMousePosition2 = Mouse.GetPosition(ImageToDisplay);
+                        Point videoMousePosition2 = Mouse.GetPosition(VideoPlayer.VideoCanvas);
+                        TryZoomInOrOut(false, imageMousePosition2, videoMousePosition2);
+                    }
                     break;
                 // if the current file's a video allow the user to hit the space bar to start or stop playing the video
                 case Key.Space:
@@ -1462,20 +1448,18 @@ namespace Timelapse.Images
                     // Will hide detection boxes, if any
                     if (!e.IsRepeat)
                     {
-                        if (IsThumbnailGridVisible == false)
+                        if (IsThumbnailGridVirtualizedVisible)
+                            ThumbnailGridVirtualized.RefreshBoundingBoxesAndEpisodeInfo();
+                        else
                         {
                             RefreshBoundingBoxes();
                             GlobalReferences.MainWindow.DuplicateDisplayIndicatorInImageIfWarranted();
-                        }
-                        else
-                        {
-                            ThumbnailGrid.RefreshBoundingBoxesAndEpisodeInfo();
                         }
                     }
                     break;
                 case Key.P:
                     // Show previous/next image in episode in a popup, regardless of the current selection
-                    if (!IsThumbnailGridVisible && !e.IsRepeat)
+                    if (!IsThumbnailGridVirtualizedVisible && !e.IsRepeat)
                     {
                         EpisodePopupIsVisible(true);
                     }
@@ -1495,14 +1479,12 @@ namespace Timelapse.Images
                     // Will show detection boxes, if any
                     if (!e.IsRepeat)
                     {
-                        if (IsThumbnailGridVisible == false)
+                        if (IsThumbnailGridVirtualizedVisible)
+                            ThumbnailGridVirtualized.RefreshBoundingBoxesAndEpisodeInfo();
+                        else
                         {
                             RefreshBoundingBoxes();
                             GlobalReferences.MainWindow.DuplicateDisplayIndicatorInImageIfWarranted();
-                        }
-                        else
-                        {
-                            ThumbnailGrid.RefreshBoundingBoxesAndEpisodeInfo();
                         }
                     }
                     break;
@@ -1594,8 +1576,8 @@ namespace Timelapse.Images
             markerCanvas.MouseRightButtonUp += Marker_MouseRightButtonUp;
             markerCanvas.MouseWheel += ImageOrCanvas_MouseWheel; // Make the mouse wheel work over marks as well as the image
 
-            markerCanvas.ToolTip = string.IsNullOrEmpty(marker.Tooltip.Trim()) 
-                ? null 
+            markerCanvas.ToolTip = string.IsNullOrEmpty(marker.Tooltip.Trim())
+                ? null
                 : marker.Tooltip;
             markerCanvas.Tag = marker;
 

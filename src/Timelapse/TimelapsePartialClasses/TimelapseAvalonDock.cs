@@ -1,11 +1,11 @@
-﻿using System;
+﻿using AvalonDock;
+using AvalonDock.Controls;
+using AvalonDock.Layout;
+using System;
 using System.ComponentModel;
 using System.Linq;
 using Timelapse.Constant;
 using Timelapse.DebuggingSupport;
-using AvalonDock;
-using AvalonDock.Controls;
-using AvalonDock.Layout;
 
 // ReSharper disable once CheckNamespace
 namespace Timelapse
@@ -46,7 +46,7 @@ namespace Timelapse
                 return;
             }
 
-            if (!(sender is LayoutAnchorable la)) return;
+            if (sender is not LayoutAnchorable la) return;
             if (la.ContentId == "ContentIDDataEntryControlPanel" && (e.PropertyName == AvalonDockValues.FloatingWindowFloatingHeightProperty || e.PropertyName == AvalonDockValues.FloatingWindowFloatingWidthProperty))
             {
                 // If we're applying constraints, ignore this event to prevent feedback loop
@@ -132,7 +132,7 @@ namespace Timelapse
             {
                 // This checks to see if its the data entry window, which is the only layoutanchorable present.
                 // If its not, then the value will be null (i.e., its the DataGrid layoutdocument)
-                if (!(floatingWindow.Model is LayoutAnchorableFloatingWindow))
+                if (floatingWindow.Model is not LayoutAnchorableFloatingWindow)
                 {
                     // SAULXXX: Note that the Floating DocumentPane (i.e., the DataGrid) behaviour is not what we want
                     // That is, it always appears topmost. yet if we set it to null, then it disappears behind the main
@@ -185,7 +185,7 @@ namespace Timelapse
             {
                 // This checks to see if its the data entry window, which is the only layoutanchorable present.
                 // If its not, then the value will be null (i.e., its the DataGrid layoutdocument)
-                if (!(floatingWindow.Model is LayoutAnchorableFloatingWindow))
+                if (floatingWindow.Model is not LayoutAnchorableFloatingWindow)
                 {
                     continue;
                 }

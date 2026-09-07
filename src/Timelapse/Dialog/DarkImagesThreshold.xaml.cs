@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -134,6 +133,7 @@ namespace Timelapse.Dialog
         #region Closing and Disposing
         private void Window_Closing(object sender, CancelEventArgs e)
         {
+            dispatcherTimer.Stop();
             DialogResult = Token.IsCancellationRequested && IsAnyDataUpdated;
         }
         public void Dispose()
@@ -279,7 +279,7 @@ namespace Timelapse.Dialog
             return await Task.Run(() =>
             {
                 // The selected files to check
-                List<ImageRow> selectedFiles = fileDatabase.FileTable.ToList();
+                List<ImageRow> selectedFiles = [.. fileDatabase.FileTable];
                 List<ColumnTuplesWithWhere> filesToUpdate = [];
                 int fileIndex = 0;
                 // ReSharper disable once ConditionIsAlwaysTrueOrFalse
@@ -339,7 +339,6 @@ namespace Timelapse.Dialog
                         int percentDone = (int)(100.0 * fileIndex / selectedFilesCount);
                         Progress.Report(new(percentDone,
                             $"{fileIndex}/{selectedFilesCount} images. Processing {file.File}", true, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
                     }
                 }
 
@@ -347,9 +346,8 @@ namespace Timelapse.Dialog
                 // Tracks whether any changes to the data or database are made
                 Progress.Report(new(100,
                     $"Writing changes for {filesToUpdate.Count} files. Please wait...", false, true));
-                Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
                 IsAnyDataUpdated = true;
-                fileDatabase.UpdateFiles(filesToUpdate);
+                fileDatabase.UpdateFiles(filesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
                 return filesToUpdate.Count > 0
                 ? $"{selectedFilesCount} files examined, with {filesToUpdate.Count} updated to reflect changes."
                 : $"{selectedFilesCount} files examined. None were updated as nothing has changed.";

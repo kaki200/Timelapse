@@ -70,25 +70,33 @@ namespace Timelapse.Dialog
             }
             ButtonCheckOut.IsEnabled = !string.IsNullOrWhiteSpace(RelativeSubFolderPath); // Enable the button only if a folder was specified
         }
-        private void ButtonCheckOut_Click(object sender, RoutedEventArgs e)
+        private async void ButtonCheckOut_Click(object sender, RoutedEventArgs e)
         {
-            // TODO If its a shortcut file, we need to check for folders and files in the database path, not actual path
-            // ReSharper disable once AssignNullToNotNullAttribute
-            string folderToUse = Path.Combine(InitialFolder, RelativeSubFolderPath);
-            bool pathExists = Directory.Exists(folderToUse);
-            //if (Directory.GetFiles(FullSubFolderPath, "*" + File.FileDatabaseFileExtension).Length > 0)
-            if (pathExists && Directory.GetFiles(folderToUse, "*" + File.FileDatabaseFileExtension).Length > 0)
+            try
             {
-                if (false == Dialogs.MergeWarningCheckOutDdbFileExists(this))
+                // TODO If its a shortcut file, we need to check for folders and files in the database path, not actual path
+                // ReSharper disable once AssignNullToNotNullAttribute
+                string folderToUse = Path.Combine(InitialFolder, RelativeSubFolderPath);
+                bool pathExists = Directory.Exists(folderToUse);
+                //if (Directory.GetFiles(FullSubFolderPath, "*" + File.FileDatabaseFileExtension).Length > 0)
+                if (pathExists && Directory.GetFiles(folderToUse, "*" + File.FileDatabaseFileExtension).Length > 0)
                 {
-                    return;
+                    if (false == Dialogs.MergeWarningCheckOutDdbFileExists(this))
+                    {
+                        return;
+                    }
                 }
+                else if (pathExists == false)
+                {
+                    Directory.CreateDirectory(folderToUse);
+                }
+                await DoCheckoutAsync();
             }
-            else if (pathExists == false)
+            catch (Exception ex)
             {
-                Directory.CreateDirectory(folderToUse);
+                AppLog.Error("ButtonCheckOut_Click: Unexpected error during merge checkout.", ex);
+                TracePrint.CatchException(ex.Message);
             }
-            DoCheckout();
         }
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
@@ -101,18 +109,6 @@ namespace Timelapse.Dialog
         #endregion
 
         #region Do Checkout
-        private async void DoCheckout()
-        {
-            try
-            {
-                await DoCheckoutAsync();
-            }
-            catch (Exception ex)
-            {
-                TracePrint.CatchException(ex.Message);
-            }
-        }
-
         private async Task DoCheckoutAsync()
         {
             // Copy the template to that folder, generating a unique name if needed

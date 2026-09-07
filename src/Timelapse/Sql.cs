@@ -119,7 +119,9 @@ namespace Timelapse
         public const string PragmaSetForeignKeys = PragmaForeignKeysEquals + " 1 ";
         public const string PragmaForeignKeysOff = PragmaForeignKeysEquals + " OFF ";
         public const string PragmaForeignKeysOn = PragmaForeignKeysEquals + " ON ";
+        public const string PragmaJournalMode = Pragma + " journal_mode ";
         public const string PragmaJournalModeWall = Pragma + " journal_mode = WAL";
+        public const string PragmaJournalModeDelete = Pragma + " journal_mode = DELETE";
         public const string PragmaQuickCheck = Pragma + " QUICK_CHECK ";
         public const string PragmaSynchronousNormal = Pragma + " synchronous = NORMAL";
         public const string PragmaTempStoreMemory = Pragma + " temp_store = MEMORY";
@@ -147,7 +149,7 @@ namespace Timelapse
         public const string SelectNameFromPragmaTableInfo = Select + Name + From + " PRAGMA_TABLE_INFO ";
         public const string SelectNameFromSqliteMasterWhereTypeEqualTableAndNameEquals = Select + Name + From + SqlMaster + Where + TypeEqualsTable + And + Name + Equal;
         public const string SelectCountFromSqliteMasterWhereTypeEqualIndexAndNameEquals = SelectCountStarFrom + SqlMaster + Where + TypeEqualsIndex + And + Name + Equal;
-        public static string SelectSqlFromSqliteMasterWhereTypeEqualTableAndNameEquals = $"{Select} sql {From} {SqlMaster} {Where} {TypeEqualsTable} {And} {Name} {Equal}";
+        public static readonly string SelectSqlFromSqliteMasterWhereTypeEqualTableAndNameEquals = $"{Select} sql {From} {SqlMaster} {Where} {TypeEqualsTable} {And} {Name} {Equal}";
         public const string Semicolon = " ; ";
         public const string Set = " SET ";
         public const string SqlMaster = " sqlite_master ";
@@ -374,7 +376,7 @@ namespace Timelapse
                 phrase = Sql.SelectOne;
             }
             return phrase + Sql.From + DBTables.Detections + Sql.InnerJoin + DBTables.FileData +
-                    Sql.On + DBTables.FileData + Sql.Dot + DatabaseColumn.ID + Sql.Equal + DBTables.Detections + "." + DetectionColumns.ImageID;
+                    Sql.On + DBTables.FileData + Sql.Dot + DatabaseColumn.ID + Sql.Equal + DBTables.Detections + Sql.Dot + DetectionColumns.ImageID;
         }
 
         /// <summary>
@@ -397,7 +399,7 @@ namespace Timelapse
         /// <returns>DataLabel operator "value", e.g., DataLabel > "5"</returns>
         public static string DataLabelOperatorValue(string dataLabel, string mathOperator, string value, string sqlDataType)
         {
-            value = value == null ? string.Empty : value.Trim();
+            value = value?.Trim() ?? string.Empty;
 
             switch (sqlDataType)
             {
@@ -430,14 +432,14 @@ namespace Timelapse
         /// <returns>Match the Date portion only  by extracting the Date from the DateTime string value, e.g., DataLabel operator "value", e.g., Date_(datetime)= Date_('2016-08-19 19:08:22')</returns>
         public static string DataLabelDateTimeOperatorValue(string dataLabel, string mathOperator, string value)
         {
-            value = value == null ? string.Empty : value.Trim();
+            value = value?.Trim() ?? string.Empty;
             return Sql.DateFunction + Sql.OpenParenthesis + dataLabel + Sql.CloseParenthesis + mathOperator + Sql.DateFunction + Sql.OpenParenthesis + Sql.Quote(value) + Sql.CloseParenthesis;
         }
 
         /// <returns>Match the Time portion only  by extracting the Time_ from the DateTime string value, e.g., DataLabel operator "value", e.g., Time_ (datetime) = '19:08:22'</returns>
         public static string DataLabelTimeOperatorValue(string dataLabel, string mathOperator, string value)
         {
-            value = value == null ? string.Empty : value.Trim();
+            value = value?.Trim() ?? string.Empty;
             return Sql.TimeFunction + Sql.OpenParenthesis + dataLabel + Sql.CloseParenthesis + mathOperator + Sql.TimeFunction + Sql.OpenParenthesis + Sql.Quote(value) + Sql.CloseParenthesis;
         }
 
@@ -449,7 +451,7 @@ namespace Timelapse
         // i.e., at the beginning, middle and end plus as exact matches.
         public static string DataLabelOperatorValue(string dataLabel, string mathOperator, string value)
         {
-            value = value == null ? string.Empty : value.Trim();
+            value = value?.Trim() ?? string.Empty;
             if (value == string.Empty)
             {
                 // special case for empty string
@@ -480,7 +482,7 @@ namespace Timelapse
         /// <returns>Detections.Category = detectionCategory</returns>
         public static string DetectionCategoryEqualsDetectionCategory(string detectionCategory)
         {
-            return DBTables.Detections + "." + DetectionColumns.Category + Sql.Equal + detectionCategory;
+            return DBTables.Detections + Sql.Dot + DetectionColumns.Category + Sql.Equal + detectionCategory;
         }
 
         /// <summary>
@@ -491,7 +493,7 @@ namespace Timelapse
         ///
         public static string ClassificationsCategoryEqualsClassificationCategory(string classificationCategory)
         {
-            return DBTables.Detections + "." + DetectionColumns.Classification + Sql.Equal + classificationCategory;
+            return DBTables.Detections + Sql.Dot + DetectionColumns.Classification + Sql.Equal + classificationCategory;
         }
 
         /// <summary>
@@ -502,9 +504,9 @@ namespace Timelapse
         /// <returns>Group By Detections.Id Having Max ( Detections.conf ) BETWEEN lowerBound AND upperBound</returns>
         public static string GroupByDetectionsIdHavingMaxDetectionsConf(double lowerBound, double upperBound)
         {
-            return Sql.GroupBy + DBTables.Detections + "." + DetectionColumns.ImageID +
+            return Sql.GroupBy + DBTables.Detections + Sql.Dot + DetectionColumns.ImageID +
                 Sql.Having + Sql.Max +
-                Sql.OpenParenthesis + DBTables.Detections + "." + DetectionColumns.Conf + Sql.CloseParenthesis +
+                Sql.OpenParenthesis + DBTables.Detections + Sql.Dot + DetectionColumns.Conf + Sql.CloseParenthesis +
                 Sql.Between + lowerBound.ToString(CultureInfo.InvariantCulture) + Sql.And + upperBound.ToString(CultureInfo.InvariantCulture);
         }
 

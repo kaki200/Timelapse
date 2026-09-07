@@ -401,7 +401,7 @@ namespace Timelapse.Dialog
             => TextBlockAddHeader(tb, text, 12);
 
         // Insert a bolded textblock (a header) with the indicated font
-        private void TextBlockAddHeader(TextBlock tb, string text, int fontSize)
+        private static void TextBlockAddHeader(TextBlock tb, string text, int fontSize)
         {
             tb.Inlines.Add(new Run
             {
@@ -413,7 +413,7 @@ namespace Timelapse.Dialog
 
         // Insert a Linebreak and Unbolded string  (usually a set of sequential lines)
         private void TextBlockAddPlainLine(TextBlock tb, string text) => TextBlockAddPlainLine(tb, text, true);
-        private void TextBlockAddPlainLine(TextBlock tb, string text, bool insertNewLine)
+        private static void TextBlockAddPlainLine(TextBlock tb, string text, bool insertNewLine)
         {
             tb.Inlines.Add(new Run
             {
@@ -607,7 +607,7 @@ namespace Timelapse.Dialog
 
 
         // General form for above: a textblock in a given row, column, and columnspan
-        private void CreateRow(Grid grid, TextBlock tb, int row, int column = 0, int columnspan = 6)
+        private static void CreateRow(Grid grid, TextBlock tb, int row, int column = 0, int columnspan = 6)
         {
             // Create a new row definition
             RowDefinition rd = new()
@@ -783,7 +783,7 @@ namespace Timelapse.Dialog
                 }
 
                 // If this is a Delete action row and a previously selected data label matches it, hide it. 
-                if (!(GetUIElement(row, 3) is Label labelAction) || labelAction.Content.ToString() != actionAdd)
+                if (GetUIElement(row, 3) is not Label labelAction || labelAction.Content.ToString() != actionAdd)
                 {
                     continue;
                 }
@@ -1086,9 +1086,9 @@ namespace Timelapse.Dialog
             string type, int level,
             Dictionary<int, Dictionary<string, string>> dataLabelsInOneButNotTheOther)
         {
-            if (null != dataLabelsInOneButNotTheOther && dataLabelsInOneButNotTheOther.ContainsKey(level) && dataLabelsInOneButNotTheOther[level].Count != 0)
+            if (null != dataLabelsInOneButNotTheOther && dataLabelsInOneButNotTheOther.TryGetValue(level, out var value) && value.Count != 0)
             {
-                inWhichTemplate.Add(type, DictionaryFilterByType(dataLabelsInOneButNotTheOther[level], type));
+                inWhichTemplate.Add(type, DictionaryFilterByType(value, type));
             }
         }
 

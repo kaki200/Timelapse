@@ -4,13 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Timelapse.Constant;
-using Timelapse.DataStructures;
 using Timelapse.DebuggingSupport;
 using Timelapse.ExifTool;
 using Timelapse.Util;
@@ -338,16 +336,28 @@ namespace Timelapse.Dialog
         #endregion
 
         #region Button callbacks        
-        private void WriteMetadataButton_Click(object sender, RoutedEventArgs e)
+        private async void WriteMetadataButton_Click(object sender, RoutedEventArgs e)
         {
-            // Call the common method with currentFileOnly = true
-            DoWriteMetadataToFiles(currentFileOnly: true);
+            try
+            {
+                await DoWriteMetadataToFilesAsync(currentFileOnly: true);
+            }
+            catch (Exception ex)
+            {
+                TracePrint.CatchException(ex.Message);
+            }
         }
 
-        private void WriteMetadataToAll_Click(object sender, RoutedEventArgs e)
+        private async void WriteMetadataToAll_Click(object sender, RoutedEventArgs e)
         {
-            // Call the common method with currentFileOnly = false
-            DoWriteMetadataToFiles(currentFileOnly: false);
+            try
+            {
+                await DoWriteMetadataToFilesAsync(currentFileOnly: false);
+            }
+            catch (Exception ex)
+            {
+                TracePrint.CatchException(ex.Message);
+            }
         }
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
@@ -385,7 +395,7 @@ namespace Timelapse.Dialog
             return dataLabelTypes;
         }
 
-        private bool IsNumericType(string controlType)
+        private static bool IsNumericType(string controlType)
         {
             // These types should have numeric values (not quoted in JSON)
             return controlType == Constant.Control.IntegerAny ||
@@ -504,7 +514,7 @@ namespace Timelapse.Dialog
             return sb.ToString();
         }
 
-        private string SanitizeDataLabelForPerl(string dataLabel)
+        private static string SanitizeDataLabelForPerl(string dataLabel)
         {
             // Replace spaces with underscores
             string sanitized = dataLabel.Replace(" ", "_");
@@ -527,18 +537,6 @@ namespace Timelapse.Dialog
         #endregion
 
         #region Metadata Writing Operations
-
-        private async void DoWriteMetadataToFiles(bool currentFileOnly)
-        {
-            try
-            {
-                await DoWriteMetadataToFilesAsync(currentFileOnly);
-            }
-            catch (Exception ex)
-            {
-                TracePrint.CatchException(ex.Message);
-            }
-        }
 
         private async Task DoWriteMetadataToFilesAsync(bool currentFileOnly)
         {
@@ -613,7 +611,7 @@ namespace Timelapse.Dialog
 
                     var rootPath = timelapseWindow.DataHandler.FileDatabase.RootPathToDatabase;
 
-                    batchWriter = GlobalReferences.TimelapseState.ExifToolManager.CreateBatchWriter(configFilePath);
+                    batchWriter = ExifToolManager.CreateBatchWriter(configFilePath);
 
                     for (int i = 0; i < totalCount; i++)
                     {
@@ -633,7 +631,6 @@ namespace Timelapse.Dialog
                             int percentDone = Convert.ToInt32(i / (double)totalCount * 100.0);
                             Progress.Report(new(percentDone,
                                 $"{i + 1}/{totalCount} files. Processing {FilesFolders.TruncateFileNameForDisplay(imageRow.File, imageRow.RelativePath, 50)}", true, false));
-                            Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
                         }
 
                         // Check that file exists
@@ -802,10 +799,10 @@ namespace Timelapse.Dialog
                 }
 
                 // Start ExifTool if not already started
-                MetadataGrid.ExifToolManager.StartIfNotAlreadyStarted();
+                Controls.FileMetadataGrid.ExifToolManager.StartIfNotAlreadyStarted();
 
                 // Fetch metadata using ExifTool directly (don't set viewModel.FilePath to avoid triggering auto-refresh)
-                Dictionary<string, DataStructures.ImageMetadata> allMetadata = MetadataGrid.ExifToolManager.FetchExifFrom(filePath);
+                Dictionary<string, DataStructures.ImageMetadata> allMetadata = Controls.FileMetadataGrid.ExifToolManager.FetchExifFrom(filePath);
 
                 // Filter to only include XMP-TimelapseData entries
                 var filteredMetadata = new System.Collections.ObjectModel.ObservableCollection<Controls.FileMetadataGrid.DataContents>();

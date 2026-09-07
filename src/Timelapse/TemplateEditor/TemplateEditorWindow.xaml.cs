@@ -1,9 +1,13 @@
-﻿using System;
+﻿using AvalonDock.Layout;
+using System;
 using System.ComponentModel;
-using System.IO;
+using System.Globalization;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Timelapse;
 using Timelapse.Database;
 using Timelapse.DataStructures;
@@ -12,7 +16,6 @@ using Timelapse.Dialog;
 using Timelapse.State;
 using Timelapse.Util;
 using TimelapseTemplateEditor.EditorCode;
-using AvalonDock.Layout;
 
 namespace TimelapseTemplateEditor
 {
@@ -28,6 +31,9 @@ namespace TimelapseTemplateEditor
         // Reference to the main Timelapse window
         public TimelapseWindow TimelapseWindow { get; set; }
 
+        // When set before Show(), Window_Loaded will automatically open this template file
+        public string PendingTemplateFilePath { get; set; }
+
         // Stores the UI state
         public static TimelapseState State => GlobalReferences.TimelapseState;
 
@@ -37,6 +43,7 @@ namespace TimelapseTemplateEditor
         private bool setInitialFolderLevelTabSelection = true;         // Whether we should set the initial metadata tab
 
         private bool closedByMenu;
+        private readonly DispatcherTimer _titleResizeTimer = new();
         #endregion
 
         #region Initialization, Window Loading, Closing 
@@ -51,14 +58,26 @@ namespace TimelapseTemplateEditor
 
             // Have the grid hide the ID and Order columns
             MenuViewShowAllColumns_Click(MenuViewShowAllColumns, null);
+
+            // Debounced title update on window resize: fires 400ms after the user stops dragging.
+            _titleResizeTimer.Interval = TimeSpan.FromMilliseconds(400);
+            _titleResizeTimer.Tick += (_, _) => { _titleResizeTimer.Stop(); UpdateWindowTitle(); };
+            SizeChanged += (_, _) =>
+            {
+                if (templateDatabase != null)
+                {
+                    _titleResizeTimer.Stop();
+                    _titleResizeTimer.Start();
+                }
+            };
         }
 
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             // Get the window and its size from its previous location
             // Maybe integrate this call with that?
-            //this.Top = userSettings.EditorWindowPosition.Top; 
-            //this.Left = userSettings.EditorWindowPosition.Left; 
+            //this.Top = userSettings.EditorWindowPosition.Top;
+            //this.Left = userSettings.EditorWindowPosition.Left;
             this.Top = this.TimelapseWindow.Top;
             this.Left = this.TimelapseWindow.Left;
             this.Height = State.TemplateEditorWindowSize.Height;
@@ -85,6 +104,23 @@ namespace TimelapseTemplateEditor
             //        userSettings.SuppressWarningToUpdateDBFilesToSQLPrompt = warning.DontShowAgain;
             //    }
             //};
+
+            try
+            {
+                if (!string.IsNullOrEmpty(PendingTemplateFilePath))
+                {
+                    if (System.IO.File.Exists(PendingTemplateFilePath))
+                    {
+                        await TemplateDoOpen(PendingTemplateFilePath).ConfigureAwait(true);
+                    }
+                    PendingTemplateFilePath = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Window_Loaded: Unexpected error opening pending template file.", ex);
+                TracePrint.CatchException(ex.Message);
+            }
         }
 
 
@@ -150,9 +186,10 @@ namespace TimelapseTemplateEditor
         // If we get an exception that wasn't handled, show a dialog asking the user to send the bug report to us.
         private void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
+            AppLog.Error("Unhandled exception in Template Editor. Shutting down.", e.ExceptionObject as Exception);
             ExceptionShutdownDialog dialog = new(this, e);
             dialog.ShowDialog();
-            // force a shutdown. While some bugs could be recoverable, its dangerous to keep things running. 
+            // force a shutdown. While some bugs could be recoverable, its dangerous to keep things running.
             Close();
             Application.Current.Shutdown();
         }
@@ -171,19 +208,39 @@ namespace TimelapseTemplateEditor
             MenuFileClose.IsEnabled = templateIsLoaded;
             MenuView.IsEnabled = templateIsLoaded;
 
-
+            // Reset the cursor if needed
+            Mouse.OverrideCursor = null;
 
             // Enable/disable  all the buttons that allow rows to be added
             TemplateUI.RowControls.EditRowDockPanel.IsEnabled = templateIsLoaded;
 
-            // Include the database file name in the window title if it is set
+            // Include the database file path in the window title, truncated to fit the title bar.
             Title = EditorConstant.MainWindowBaseTitle;
-            Title += templateIsLoaded ? " (" + Path.GetFileName(filePath) + ")" : string.Empty;
+            Title += templateIsLoaded ? " (" + FilesFolders.TruncateFileNameForDisplay(filePath, GetTitlePathCharLimit()) + ")" : string.Empty;
 
             // Switch to the appropriate tab
             this.setInitialFolderLevelTabSelection = true;
             TemplatePane.IsActive = templateIsLoaded;
             InstructionPane.IsActive = !templateIsLoaded;
+        }
+
+        private void UpdateWindowTitle()
+        {
+            if (templateDatabase?.FilePath == null) return;
+            Title = EditorConstant.MainWindowBaseTitle + " ("
+                + FilesFolders.TruncateFileNameForDisplay(templateDatabase.FilePath, GetTitlePathCharLimit())
+                + ")";
+        }
+
+        private int GetTitlePathCharLimit()
+        {
+            var typeface = new Typeface(SystemFonts.CaptionFontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            var ft = new FormattedText("n", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                                       typeface, SystemFonts.CaptionFontSize, Brushes.Black, dpi);
+            double baseOverhead = (EditorConstant.MainWindowBaseTitle.Length + 4) * ft.Width;
+            double available = Math.Max(0, ActualWidth - 190 - baseOverhead);
+            return Math.Max(30, (int)(available / ft.Width));
         }
         #endregion
 

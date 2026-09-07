@@ -16,7 +16,7 @@ namespace TimelapseTemplateEditor.ControlsMetadata
     public partial class MetadataUIControl
     {
         #region Variables
-        private CommonDatabase TemplateDatabase => Globals.TemplateDatabase;
+        private static CommonDatabase TemplateDatabase => Globals.TemplateDatabase;
         #endregion
 
         #region Constructor and Loading
@@ -246,7 +246,7 @@ namespace TimelapseTemplateEditor.ControlsMetadata
             // can bubble up from other controls contained by the tab control eg datagrid selections
             // Alternately, we could ensure that those child controls are done where e.Handled == true
             // but that would be a pain to do and somewhat buggy.
-            if (!(e.OriginalSource is TabControl tabControl)) return;
+            if (e.OriginalSource is not TabControl tabControl) return;
 
             foreach (TabItem tabItem in tabControl.Items)
             {

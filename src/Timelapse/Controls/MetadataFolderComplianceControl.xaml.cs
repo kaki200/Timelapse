@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Timelapse.Constant;
 using Timelapse.ControlsMetadata;
 using Timelapse.Database;
 using Timelapse.DataTables;
@@ -316,7 +317,7 @@ namespace Timelapse.Controls
                 tvi!.IsExpanded = true; // always expand the root node
             }
         }
-        private void ExpandTreeView(TreeViewItem item, bool expandTheTreeViewItem)
+        private static void ExpandTreeView(TreeViewItem item, bool expandTheTreeViewItem)
         {
             // item.IsExpanded = expandTheTreeViewItem;
             // Start recursion on all subnodes.
@@ -446,7 +447,7 @@ namespace Timelapse.Controls
             {
                 Text = alias,
                 FontStyle = FontStyles.Italic,
-                Foreground = !string.IsNullOrWhiteSpace(warning) ? Brushes.Crimson : (SolidColorBrush)new BrushConverter().ConvertFromString("#FF3A3A3A") //Brushes.DarkSlateGray
+                Foreground = !string.IsNullOrWhiteSpace(warning) ? Brushes.Crimson : Colours.VeryDarkGray
 
             });
             Grid.SetColumn(tbLevelAliasName, 2);
@@ -491,7 +492,7 @@ namespace Timelapse.Controls
             return grid;
         }
 
-        private TextBlock GetTextBlockFromTreeViewItem(TreeViewItem tvi)
+        private static TextBlock GetTextBlockFromTreeViewItem(TreeViewItem tvi)
         {
             // If the folder doesn't exists, flash the node and don't start the editing operation
             StackPanel sp = (StackPanel)tvi.Header;
@@ -507,7 +508,7 @@ namespace Timelapse.Controls
         #endregion
 
         #region Path manipulations
-        private string GetParent(string path)
+        private static string GetParent(string path)
         {
             string parentPath = string.Empty;
             int index = path.LastIndexOf(Path.DirectorySeparatorChar);

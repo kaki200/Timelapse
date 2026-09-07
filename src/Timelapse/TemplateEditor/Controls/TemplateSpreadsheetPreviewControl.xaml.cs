@@ -1,8 +1,10 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
+using Timelapse.DataStructures;
 using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
+using Timelapse.Dialog;
 using TimelapseTemplateEditor.EditorCode;
 using Control = Timelapse.Constant.Control;
 
@@ -22,9 +24,9 @@ namespace TimelapseTemplateEditor.Controls
 
         #region public Generate the Spreadsheet Preview
         // Generate the spreadsheet, adjusting the DateTime visibility as needed
-        public void GenerateSpreadsheet()
+        public static void GenerateSpreadsheet()
         {
-            List<ControlRow> controlsInSpreadsheetOrder = Globals.TemplateDatabase.Controls.OrderBy(control => control.SpreadsheetOrder).ToList();
+            List<ControlRow> controlsInSpreadsheetOrder = [.. Globals.TemplateDatabase.Controls.OrderBy(control => control.SpreadsheetOrder)];
             Globals.TemplateUI.TemplateSpreadsheetPreviewControl.SpreadsheetPreview.Columns.Clear();
 
             // Now generate the spreadsheet columns as needed. 
@@ -65,7 +67,12 @@ namespace TimelapseTemplateEditor.Controls
                 }
             }
             Globals.RootEditor.dataGridBeingUpdatedByCode = true;
-            Globals.TemplateDatabase.UpdateControlDisplayOrder(Control.SpreadsheetOrder, spreadsheetOrderByDataLabel);
+            if (!Globals.TemplateDatabase.UpdateControlDisplayOrder(Control.SpreadsheetOrder, spreadsheetOrderByDataLabel))
+            {
+                string message = "OnSpreadsheetOrderChanged: Timelapse could not save the new spreadsheet order to your template file.";
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false, message, Globals.TemplateDatabase.FilePath);
+                return;
+            }
             Globals.TemplateDataGridControl.DoLayoutUpdated(true);
             Globals.RootEditor.dataGridBeingUpdatedByCode = false;
         }

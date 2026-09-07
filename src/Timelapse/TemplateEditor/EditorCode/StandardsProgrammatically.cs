@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Timelapse.Constant;
+using Timelapse.Database;
 using Timelapse.DataStructures;
+using Timelapse.Dialog;
 using TimelapseTemplateEditor.Controls;
 using TimelapseTemplateEditor.ControlsMetadata;
 using TimelapseTemplateEditor.EditorCode;
@@ -69,7 +71,14 @@ namespace TimelapseTemplateEditor
                 infoColumnsTuplesWithWhereList.Add(new(columnTupleList, id++));
             }
             // Now add it to the database
-            Globals.TemplateDatabase.Database.Update(DBTables.MetadataTemplate, infoColumnsTuplesWithWhereList);
+            SqlOperationResult updateMetaStdResult = Globals.TemplateDatabase.Database.Update(DBTables.MetadataTemplate, infoColumnsTuplesWithWhereList);
+            if (!updateMetaStdResult.Success)
+            {
+                Mouse.OverrideCursor = null;
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false,
+                    "The problem occurred in DoCreateMetadataStandardFields (MetadataTemplate update)", Globals.TemplateDatabase.FilePath, updateMetaStdResult);
+                return;
+            }
 
             // Refresh the metadata controls based on the new database contents
             Globals.TemplateDatabase.LoadMetadataControlsAndInfoFromTemplateDBSortedByControlOrder();
@@ -102,14 +111,21 @@ namespace TimelapseTemplateEditor
 
                 rowsColumnsTuplesWithWhereList.Add(new(columnTupleList, id++));
             }
-            Globals.TemplateDatabase.Database.Update(DBTables.Template, rowsColumnsTuplesWithWhereList);
+            SqlOperationResult updateImgStdResult = Globals.TemplateDatabase.Database.Update(DBTables.Template, rowsColumnsTuplesWithWhereList);
+            if (!updateImgStdResult.Success)
+            {
+                Mouse.OverrideCursor = null;
+                Dialogs.TimelapseNeedsToShutDownDataWriteErrorDialog(GlobalReferences.MainWindow, false,
+                    "The problem occurred in DoCreateMetadataStandardFields (Template update)", Globals.TemplateDatabase.FilePath, updateImgStdResult);
+                return;
+            }
 
             // Refresh the metadata controls based on the new database contents
             Globals.TemplateDatabase.LoadControlsFromTemplateDBSortedByControlOrder();
 
             // Update the data entry previews so they reflects the current values in the database
-            Globals.TemplateDataEntryPreviewPanelControl.GeneratePreviewControls(Globals.TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, Globals.TemplateDatabase.Controls);
-            Globals.TemplateSpreadsheet.GenerateSpreadsheet();
+            TemplateDataEntryPreviewPanel.GeneratePreviewControls(Globals.TemplateUI.TemplateDataEntryPreviewPanel.ControlsPanel, Globals.TemplateDatabase.Controls);
+            TemplateSpreadsheetPreviewControl.GenerateSpreadsheet();
 
             // Ensure the metadata preview panels are all scrolled to the top (which matches the datagrid scrolling position)
             if (null != Globals.Root?.MetadataUI?.MetadataTabs?.Items)

@@ -50,30 +50,19 @@ namespace Timelapse
             }
 
             // Set a string to indicate the current selection
-            string status;
-            switch (selection)
+            var status = selection switch
             {
-                case FileSelectionEnum.All:
-                    status = "All files";
-                    break;
-                case FileSelectionEnum.Custom:
-                    status = "Custom selection";
-                    break;
-                case FileSelectionEnum.MarkedForDeletion:
-                    status = "Files marked for deletion";
-                    break;
-                case FileSelectionEnum.Folders:
-                    status = "Files in a specific folder";
-                    break;
-                case FileSelectionEnum.Missing:
-                    status = "Missing files";
-                    break;
-                default:
-                    throw new NotSupportedException($"Unhandled file selection {selection}.");
-            }
+                FileSelectionEnum.All => "All files",
+                FileSelectionEnum.Custom => "Custom selection",
+                FileSelectionEnum.MarkedForDeletion => "Files marked for deletion",
+                FileSelectionEnum.Folders => "Files in a specific folder",
+                FileSelectionEnum.Missing => "Missing files",
+                _ => throw new NotSupportedException($"Unhandled file selection {selection}."),
+            };
 
             // Allow random sampling after a new selection
             this.MenuItemSelectRandomSample.IsEnabled = true;
+            this.MenuItemSelectRandomSample.IsChecked = false;
 
             // Select the files according to the given selection, where Missing files is treated as a special case.
             Mouse.OverrideCursor = Cursors.Wait;
@@ -106,6 +95,10 @@ namespace Timelapse
                 await DataHandler.FileDatabase.SelectFilesAsync(selection).ConfigureAwait(true);
                 //BusyCancelIndicator.EnableForSelection(false);
                 DataHandler.FileDatabase.BindToDataGrid();
+                if (SqlErrorState.HasError)
+                {
+                    SQLiteWrapper.ResetAllReadErrorState();
+                }
             }
             //Mouse.OverrideCursor = null;
 
@@ -125,6 +118,10 @@ namespace Timelapse
                 await DataHandler.FileDatabase.SelectFilesAsync(selection).ConfigureAwait(true);
                 //BusyCancelIndicator.EnableForSelection(false);
                 DataHandler.FileDatabase.BindToDataGrid();
+                if (SqlErrorState.HasError)
+                {
+                    SQLiteWrapper.ResetAllReadErrorState();
+                }
             }
 
             // Show feedback of the status description in both the status bar and the data entry control panel title
@@ -150,18 +147,22 @@ namespace Timelapse
                 FileNavigatorSlider.TickFrequency = 0.02 * FileNavigatorSlider.Maximum;
             }
 
-            // Reset the ThumbnailGrid selection after every change in the selection
-            if (IsDisplayingMultipleImagesInOverview())
-            {
-                MarkableCanvas.ThumbnailGrid.SelectInitialCellOnly();
-            }
-
             await DataEntryControls.AutocompletionPopulateAllNotesWithFileTableValuesAsync(DataHandler.FileDatabase);
 
             // Always force an update after a selection
             //BusyCancelIndicator.EnableForSelection(true);
             BusyCancelIndicator.Message = "Setting up the file to display. Please wait...";
             await FileShowAsync(DataHandler.FileDatabase.GetFileOrNextFileIndex(imageID), true);
+
+            // After a selection/sort change, reset the virtualized grid to start from file 0:
+            // file 0 becomes the home image, anchor, and only selected thumbnail.
+            if (MarkableCanvas.IsThumbnailGridVirtualizedVisible)
+            {
+                MarkableCanvas.ThumbnailGridVirtualized.FileTableStartIndex = 0;
+                MarkableCanvas.ThumbnailGridVirtualized.NavigateTo(0);      // sets zoomAnchorFileIndex = 0
+                MarkableCanvas.RefreshThumbnailGridVirtualized(null);       // rebuilds pool at current zoom
+                MarkableCanvas.ThumbnailGridVirtualized.SelectInitialCellOnly();
+            }
             // BusyCancelIndicator.EnableForSelection(false);
 
             // Update the status bar accordingly

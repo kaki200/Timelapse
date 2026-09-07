@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -155,7 +154,6 @@ namespace Timelapse.Dialog
                         int percentDone = Convert.ToInt32(imageIndex / TotalImages * 100.0);
                         Progress.Report(new(percentDone,
                             $"Processing {imageIndex}/{TotalImages} images.  ", true, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
                     }
 
                     // Distinguish between single files vs and episode of files
@@ -214,8 +212,7 @@ namespace Timelapse.Dialog
                 IsAnyDataUpdated = true;
                 Progress.Report(new(100,
                     $"Writing Episode data for {TotalImages} files. Please wait...", false, true));
-                Thread.Sleep(ThrottleValues.RenderingBackoffTime);  // Allows the UI thread to update every now and then
-                fileDatabase.UpdateFiles(imagesToUpdate);
+                fileDatabase.UpdateFiles(imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
 
                 return true;
             }, Token).ConfigureAwait(true);

@@ -47,11 +47,18 @@ namespace Timelapse
 
         private void MenuItemTestSomeCode_Click(object sender, RoutedEventArgs e)
         {
-            //if (this.DataHandler?.FileDatabase != null)
-            //{
-                Dialog.TestSomeCodeDialog dialog = new Dialog.TestSomeCodeDialog(this);
+            // Test ExceptionShutdownDialog — shows the dialog with a synthetic exception and log file contents
+            try
+            {
+                throw new InvalidOperationException("This is a synthetic test exception to verify ExceptionShutdownDialog.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Test: Synthetic exception to verify ExceptionShutdownDialog.", ex);
+                ExceptionShutdownDialog dialog = new(this, ex);
                 dialog.ShowDialog();
-           // }
+                // Note: no Close() / Shutdown() here — this is a test only
+            }
         }
 
         #endregion
@@ -67,17 +74,31 @@ namespace Timelapse
             if (IsFileDatabaseAvailable())
             {
                 // Warn the user that Timelapse will close the current image set before doing the switch
-                if (Dialogs.MenuFileSwitchBetweenTimelapseAndEditorWarningDialog(this, true) == false)
+                if (State.SuppressSwitchBetweenTimelapseAndEditorWarning == false &&
+                    Dialogs.MenuFileSwitchBetweenTimelapseAndEditorWarningDialog(this, true) == false)
                 {
                     return;
                 }
                 // Close the current image set
                 CloseImageSet();
             }
-            DoSwitchToTheTemplateEditor();
+            DoSwitchToTheTemplateEditor(null);
         }
 
-        private void DoSwitchToTheTemplateEditor()
+        private void MenuItemSwitchToTheTemplateEditorOnCurrentFile_Click(object sender, RoutedEventArgs e)
+        {
+            // Capture the template path before closing the image set
+            string templateFilePath = templateDatabase?.FilePath;
+            if (State.SuppressSwitchBetweenTimelapseAndEditorWarning == false &&
+                Dialogs.MenuFileSwitchBetweenTimelapseAndEditorWarningDialog(this, true) == false)
+            {
+                return;
+            }
+            CloseImageSet();
+            DoSwitchToTheTemplateEditor(templateFilePath);
+        }
+
+        private void DoSwitchToTheTemplateEditor(string templateFilePath)
         {
             // Check if Template Editor is already open
             foreach (Window window in Application.Current.Windows)
@@ -94,7 +115,8 @@ namespace Timelapse
             this.TimelapseTemplateEditor = new()
             {
                 Owner = this,
-                TimelapseWindow = this
+                TimelapseWindow = this,
+                PendingTemplateFilePath = templateFilePath
             };
             this.TimelapseTemplateEditor.Show();
             this.Hide();
@@ -111,6 +133,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemLoadImages: Unhandled exception while loading image set.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -122,14 +145,10 @@ namespace Timelapse
                 // If its not a valid template, display a dialog and abort
                 if (false == Dialogs.DialogIsFileValid(this, templateDatabasePath))
                 {
-                    // This is an example of how we can catch the error state
                     if (SqlErrorState.HasError)
-                    //{
-                    //    SqlOperationResult.GenerateExceptionDialog(SqlErrorState.SqlOperationResult, "MenuItemLoadImages_ClickAsync");
-                    //    SqlErrorState.Reset();
-                    //}
-                    // Add it to the list, as its originally invalid, but the user was asked to update it
-                    // So its likely ok now.
+                    {
+                        SQLiteWrapper.ResetAllReadErrorState();
+                    }
                     return;
                 }
                 if (false == await DoLoadImages(templateDatabasePath))
@@ -140,8 +159,25 @@ namespace Timelapse
             }
         }
 
+        public async Task TryOpenTemplateAsync(string templatePath)
+        {
+            if (string.IsNullOrEmpty(templatePath) || !System.IO.File.Exists(templatePath))
+            {
+                return;
+            }
+            if (Dialogs.DialogIsFileValid(this, templatePath))
+            {
+                if (false == await DoLoadImages(templatePath))
+                {
+                    StatusBar.SetMessage("Aborted. Images were not added to the image set.");
+                }
+            }
+        }
+
         private async Task<bool> DoLoadImages(string templateDatabasePath)
         {
+            AppLog.Initialize(Path.GetDirectoryName(templateDatabasePath));
+
             // Set up busy indicators. Note that this was not originally showing the busy indicator,
             // but the messy code below now does that albeit without animating the progress bar
             Mouse.OverrideCursor = Cursors.Wait;
@@ -170,6 +206,7 @@ namespace Timelapse
                     // Since its failed, try to delete the empty .ddb file as otherwise its existance can be confusing to the user.
                     FilesFolders.TryDeleteFileIfExists(results.Item2);
                 }
+                Mouse.OverrideCursor = null;
                 BusyCancelIndicator.Reset(false);
                 return false;
             }
@@ -188,6 +225,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemRecentImageSet: Unhandled exception while loading recent image set.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -242,6 +280,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemCreateEmptyDatabase: Unhandled exception while creating empty database for merging.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -292,6 +331,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemCheckInDatabases: Unhandled exception during database check-in.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -374,6 +414,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemExportCsv: Unhandled exception during CSV export.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -424,7 +465,7 @@ namespace Timelapse
                 // Show the Busy indicator, with cancellation enabled
                 BusyCancelIndicator.Reset(true);
                 bool success = await CsvReaderWriter.ExportToCsv(DataHandler.FileDatabase, DataEntryControls, selectedCSVFilePath,
-                        State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates, State.CSVIncludeFolderColumn, DataHandler.FileDatabase.ImageSet.RootFolderName,
+                        State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates, State.CSVIncludeFolderColumn, State.CSVUseASCIIEncoding,DataHandler.FileDatabase.ImageSet.RootFolderName,
                         GlobalReferences.CancelTokenSource.Token);
                 bool wasCancelled = GlobalReferences.CancelTokenSource.IsCancellationRequested;
                 BusyCancelIndicator.Reset(false);
@@ -439,6 +480,10 @@ namespace Timelapse
                 // Can't write the spreadsheet file
                 Dialogs.MenuFileCantWriteSpreadsheetFileDialog(this, selectedCSVFilePath, exception.GetType().FullName, exception.Message);
                 return;
+            }
+            if (SqlErrorState.HasError)
+            {
+                SQLiteWrapper.ResetAllReadErrorState();
             }
 
             MenuItem mi = (MenuItem)sender;
@@ -485,6 +530,7 @@ namespace Timelapse
             }
             catch (Exception ex)
             {
+                AppLog.Error("MenuItemImportFromCsv: Unhandled exception during CSV import.", ex);
                 TracePrint.CatchException(ex.Message);
             }
         }
@@ -522,7 +568,7 @@ namespace Timelapse
                 // Show the Busy indicator, with cancellation enabled for Parts 1-4 of the import
                 BusyCancelIndicator.Reset(true);
 
-                Tuple<bool, List<string>> resultAndImportErrors = await CsvReaderWriter.TryImportFromCsv(csvFilePath, DataHandler.FileDatabase, GlobalReferences.CancelTokenSource.Token).ConfigureAwait(true);
+                (CSVReadingResult, List<string>) resultAndImportErrors = await CsvReaderWriter.TryImportFromCsv(csvFilePath, DataHandler.FileDatabase, GlobalReferences.CancelTokenSource.Token).ConfigureAwait(true);
 
                 bool wasCancelled = GlobalReferences.CancelTokenSource.IsCancellationRequested;
                 BusyCancelIndicator.Reset(false);
@@ -532,26 +578,39 @@ namespace Timelapse
                     StatusBar.SetMessage("CSV file import cancelled.");
                     Dialogs.MenuFileImportCSVFileCancelledDialog(this);
                 }
-                else if (resultAndImportErrors.Item1 == false)
+                else if (resultAndImportErrors.Item1 == CSVReadingResult.FileNotReadable)
                 {
                     // Can't import CSV File
-                    Dialogs.MenuFileCantImportCSVFileDialog(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
+                    Dialogs.MenuFileImportCSVFileCannotBeReadDialog(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
+                }
+                else if (resultAndImportErrors.Item1 == CSVReadingResult.NoDataPresent)
+                {
+                    Dialogs.MenuFileImportCSVFileNoDataPresentDialog(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
+                }
+                else if (resultAndImportErrors.Item1 == CSVReadingResult.AbortedAsHeaderErrors)
+                {
+                    Dialogs.MenuFileImportCSVAbortedAsHeaderErrors(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
+                }
+                else if (resultAndImportErrors.Item1 == CSVReadingResult.AbortedAsDataErrors)
+                {
+                    Dialogs.MenuFileImportCSVAbortedAsDataErrors(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
                 }
                 else
                 {
                     // Importing done.
-                    Dialogs.MenuFileCSVFileImportedDialog(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
+
 
                     // Reload the data
                     BusyCancelIndicator.IsBusy = true;
                     await FilesSelectAndShowAsync().ConfigureAwait(true);
                     BusyCancelIndicator.IsBusy = false;
                     StatusBar.SetMessage("CSV file imported.");
+                    Dialogs.MenuFileCSVFileImportedDialog(this, Path.GetFileName(csvFilePath), resultAndImportErrors.Item2);
                 }
             }
             catch (Exception exception)
             {
-                // Can't import the .csv file
+                // Can't import the .csv file for some unknown reason
                 Dialogs.MenuFileCantImportCSVFileDialog(this, Path.GetFileName(csvFilePath), exception.Message);
             }
         }
@@ -661,8 +720,8 @@ namespace Timelapse
                 // Show the Busy indicator, with cancellation enabled
                 BusyCancelIndicator.Reset(true);
                 bool success = await CsvReaderWriter.ExportToCsv(DataHandler.FileDatabase, DataEntryControls, imageFilePath,
-                        State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates, State.CSVIncludeFolderColumn, DataHandler.FileDatabase.ImageSet.RootFolderName,
-                        GlobalReferences.CancelTokenSource.Token);
+                        State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates, State.CSVIncludeFolderColumn, State.CSVUseASCIIEncoding,DataHandler.FileDatabase.ImageSet.RootFolderName,
+                       GlobalReferences.CancelTokenSource.Token);
                 bool wasCancelled = GlobalReferences.CancelTokenSource.IsCancellationRequested;
                 BusyCancelIndicator.Reset(false);
                 if (!success)
@@ -685,7 +744,7 @@ namespace Timelapse
             {
                 // Show the Busy indicator
                 BusyCancelIndicator.IsBusy = true;
-                if (false == await CsvReaderWriter.ExportMetadataToCsv(DataHandler.FileDatabase, csvExportFolder, State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates))
+                if (false == await CsvReaderWriter.ExportMetadataToCsv(DataHandler.FileDatabase, csvExportFolder, State.CSVDateTimeOptions, State.CSVInsertSpaceBeforeDates, State.CSVUseASCIIEncoding))
                 {
                     // Hide the Busy indicator
                     BusyCancelIndicator.IsBusy = false;
@@ -696,9 +755,10 @@ namespace Timelapse
                 BusyCancelIndicator.IsBusy = false;
                 Dialogs.AllDataExportedToCSV(this, csvExportFolder, filesToBeWritten, true);
             }
-            catch
+            catch (Exception ex)
             {
                 // Can't write the spreadsheet file
+                AppLog.Error("MenuItemExportAllFilesToCsv: Failed to export data files to CSV.", ex);
                 BusyCancelIndicator.IsBusy = false;
                 Dialogs.FileCantOpen(GlobalReferences.MainWindow, csvExportFolder, true);
             }
@@ -714,6 +774,7 @@ namespace Timelapse
 
 
         #endregion
+
         #region Export the current image or video _file
         private void MenuItemExportThisImage_Click(object sender, RoutedEventArgs e)
         {

@@ -1,18 +1,18 @@
-﻿using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
-using Microsoft.WindowsAPICodePack.Shell;
+﻿using Microsoft.WindowsAPICodePack.Shell;
+using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
 using System;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Timelapse.Constant;
-using Timelapse.Util;
-using File = System.IO.File;
 using Timelapse.DataStructures;
 using Timelapse.Images;
+using Timelapse.Util;
+using File = System.IO.File;
 using RadioButton = System.Windows.Controls.RadioButton;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 
 namespace Timelapse.Controls
 {
@@ -1068,7 +1068,7 @@ namespace Timelapse.Controls
                     return null;
                 }
 
-                string currentPath = mainWindow.DataHandler.ImageCache.Current.GetFilePath(GlobalReferences.MainWindow.DataHandler.FileDatabase.RootPathToImages);
+                string currentPath = mainWindow.DataHandler.ImageCache.Current.GetFilePath(mainWindow.DataHandler.FileDatabase.RootPathToImages);
                 frameRate = VideoPlayer.GetFrameRateFromFile(currentPath);
                 if (frameRate <= 0)
                 {

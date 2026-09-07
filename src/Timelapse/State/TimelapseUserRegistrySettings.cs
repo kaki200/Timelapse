@@ -26,6 +26,7 @@ namespace Timelapse.State
         public CSVDateTimeOptionsEnum CSVDateTimeOptions { get; set; }
         public bool CSVIncludeFolderColumn { get; set; }
         public bool CSVInsertSpaceBeforeDates { get; set; }
+        public bool CSVUseASCIIEncoding { get; set; }
         public int DarkPixelThreshold { get; set; }
         public double DarkPixelRatioThreshold { get; set; }
         public TimeSpan EpisodeTimeThreshold { get; set; }
@@ -56,6 +57,7 @@ namespace Timelapse.State
         public bool SuppressSelectedPopulateFieldFromMetadataPrompt { get; set; }
         public bool SuppressSelectedRereadDatesFromFilesPrompt { get; set; }
         public bool SuppressShortcutDetectedPrompt { get; set; }
+        public bool SuppressSwitchBetweenTimelapseAndEditorWarning { get; set; }
         public bool SuppressWarningToUpdateDBFilesToSQLPrompt { get; set; }
         public Throttles Throttles { get; }
         public bool TabOrderIncludeDateTime { get; set; }
@@ -106,6 +108,7 @@ namespace Timelapse.State
             }
             CSVIncludeFolderColumn = registryKey.GetBoolean(WindowRegistryKeys.CSVIncludeFolderColumn, true);
             CSVInsertSpaceBeforeDates = registryKey.GetBoolean(WindowRegistryKeys.CSVInsertSpaceBeforeDates, true);
+            CSVUseASCIIEncoding = registryKey.GetBoolean(WindowRegistryKeys.CSVUseASCIIEncoding, false);
             CustomSelectionTermCombiningOperator = registryKey.GetEnum(WindowRegistryKeys.CustomSelectionTermCombiningOperator, CustomSelectionOperatorEnum.And);
             DarkPixelRatioThreshold = registryKey.GetDouble(WindowRegistryKeys.DarkPixelRatio, ImageValues.DarkPixelRatioThresholdDefault);
             DarkPixelThreshold = registryKey.GetInteger(WindowRegistryKeys.DarkPixelThreshold, ImageValues.DarkPixelThresholdDefault);
@@ -137,6 +140,7 @@ namespace Timelapse.State
             SuppressSelectedPopulateFieldFromMetadataPrompt = registryKey.GetBoolean(WindowRegistryKeys.SuppressSelectedPopulateFieldFromMetadataPrompt, false);
             SuppressSelectedRereadDatesFromFilesPrompt = registryKey.GetBoolean(WindowRegistryKeys.SuppressSelectedRereadDatesFromFilesPrompt, false);
             SuppressShortcutDetectedPrompt = registryKey.GetBoolean(WindowRegistryKeys.SuppressShortcutDetectedPrompt, false);
+            SuppressSwitchBetweenTimelapseAndEditorWarning = registryKey.GetBoolean(WindowRegistryKeys.SuppressSwitchBetweenTimelapseAndEditorWarning, false);
             SuppressWarningToUpdateDBFilesToSQLPrompt = registryKey.GetBoolean(WindowRegistryKeys.SuppressWarningToUpdateDBFilesToSQLPrompt, false);
             TabOrderIncludeDateTime = registryKey.GetBoolean(WindowRegistryKeys.TabOrderIncludeDateTime, false);
             TabOrderIncludeDeleteFlag = registryKey.GetBoolean(WindowRegistryKeys.TabOrderIncludeDeleteFlag, false);
@@ -223,6 +227,7 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.CSVDateTimeOptions, CSVDateTimeOptions.ToString());
             registryKey.Write(WindowRegistryKeys.CSVIncludeFolderColumn, CSVIncludeFolderColumn.ToString());
             registryKey.Write(WindowRegistryKeys.CSVInsertSpaceBeforeDates, CSVInsertSpaceBeforeDates);
+            registryKey.Write(WindowRegistryKeys.CSVUseASCIIEncoding, CSVUseASCIIEncoding);
             registryKey.Write(WindowRegistryKeys.CustomSelectionTermCombiningOperator, CustomSelectionTermCombiningOperator.ToString());
             registryKey.Write(WindowRegistryKeys.DarkPixelRatio, DarkPixelRatioThreshold);
             registryKey.Write(WindowRegistryKeys.DarkPixelThreshold, DarkPixelThreshold);
@@ -255,6 +260,7 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.SuppressSelectedPopulateFieldFromMetadataPrompt, SuppressSelectedPopulateFieldFromMetadataPrompt);
             registryKey.Write(WindowRegistryKeys.SuppressSelectedRereadDatesFromFilesPrompt, SuppressSelectedRereadDatesFromFilesPrompt);
             registryKey.Write(WindowRegistryKeys.SuppressShortcutDetectedPrompt, SuppressShortcutDetectedPrompt);
+            registryKey.Write(WindowRegistryKeys.SuppressSwitchBetweenTimelapseAndEditorWarning, SuppressSwitchBetweenTimelapseAndEditorWarning);
             registryKey.Write(WindowRegistryKeys.SuppressWarningToUpdateDBFilesToSQLPrompt, SuppressWarningToUpdateDBFilesToSQLPrompt);
             registryKey.Write(WindowRegistryKeys.TabOrderIncludeDateTime, TabOrderIncludeDateTime);
             registryKey.Write(WindowRegistryKeys.TabOrderIncludeDeleteFlag, TabOrderIncludeDeleteFlag);

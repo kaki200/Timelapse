@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Timelapse.Constant;
@@ -137,13 +136,12 @@ namespace Timelapse.Dialog
 
                     var metadata = metadataToolSelected == MetadataToolEnum.MetadataExtractor
                         ? ImageMetadataDictionary.LoadMetadata(image.GetFilePath(FileDatabase.RootPathToImages))
-                        : MetadataGrid.ExifToolManager.FetchExifFrom(image.GetFilePath(FileDatabase.RootPathToImages), tags);
+                        : Controls.FileMetadataGrid.ExifToolManager.FetchExifFrom(image.GetFilePath(FileDatabase.RootPathToImages), tags);
 
                     if (IsReadyToRefresh())
                     {
                         int percentDone = Convert.ToInt32(imageIndex / totalImages * 100.0);
                         ReportProgress(new(percentDone, $"{imageIndex}/{totalImages} images. Processing {image.File}", true, false));
-                        Thread.Sleep(ThrottleValues.RenderingBackoffTime);
                     }
 
                     foreach (var item in MetadataGrid.SelectedMetadata)
@@ -215,8 +213,7 @@ namespace Timelapse.Dialog
                 {
                     isAnyDataUpdated = true;
                     ReportProgress(new(100, $"Writing metadata for {totalImages} files. Please wait...", false, true));
-                    Thread.Sleep(ThrottleValues.RenderingBackoffTime);
-                    FileDatabase.UpdateFiles(imagesToUpdate);
+                    FileDatabase.UpdateFiles(imagesToUpdate, ThrottleValues.BackgroundWriteExtendedBusyTimeoutMs);
                 }
                 return feedbackData;
             }, GetCancellationToken()).ConfigureAwait(true);
