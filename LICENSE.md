@@ -97,6 +97,12 @@ While a brief summary is include, it is your responsibility to visit each web si
 - ⚠️ As Timelapse is open source, it appears that it is free for commercial use. However, you should review their terms to understand restrictions, if any
 - https://sixlabors.com/pricing/
 
+**FlyleafLib / Flyleaf.FFmpeg**
+- License: GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later), as specified by the NuGet packages used by Timelapse
+- FlyleafLib: https://github.com/SuRGeoNix/Flyleaf
+- Flyleaf.FFmpeg: https://www.nuget.org/packages/Flyleaf.FFmpeg/8.0.0.1
+- The native FFmpeg libraries included in a packaged release can have additional licensing details based on their exact build configuration. Their corresponding license text and source/build information must be retained when those binaries are redistributed.
+
 **System.Data.SQLite**
 - License: Public Domain
 - No license required
