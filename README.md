@@ -1,14 +1,15 @@
 # Timelapse
 
-## このフォークのインストーラー
+## Installer for this fork
 
-`Timelapse-Kaki-2.5.0.10-win-x64.msi` をダブルクリックしてインストールした後、
-デスクトップの **Timelapse (kaki200 fork)** を起動してください。
-ExifTool・Perl・LGPL版FFmpeg・.NET・必要なVCランタイムを同梱しているため、
-個別のダウンロードやPATH設定は不要です。
+Double-click `Timelapse-Kaki-2.5.0.10-win-x64.msi` to install, then launch
+**Timelapse (kaki200 fork)** using the desktop shortcut.
+The installer includes ExifTool, Perl, an LGPL-only FFmpeg build, .NET, and the
+required Visual C++ runtime, so no additional downloads or PATH configuration are needed.
 
-ビルド方法と同梱ライセンスは [インストーラーの説明](Installers/TimelapseInstaller-PerUser/README.md)
-および [第三者ライセンスの説明](Installers/THIRD-PARTY-NOTICES.md) を参照してください。
+For build instructions and bundled licenses, see the
+[installer README](Installers/TimelapseInstaller-PerUser/README.md) and
+[third-party notices](Installers/THIRD-PARTY-NOTICES.md).
 
 [![Download](https://img.shields.io/badge/Download-Timelapse-blue?style=flat-square)](https://timelapse.ucalgary.ca/download/) [![Documentation](https://img.shields.io/badge/Documentation-Website-blue?style=flat-square)](https://timelapse.ucalgary.ca/) [![Tutorial Guides](https://img.shields.io/badge/Guides-Tutorials-orange?style=flat-square)](https://timelapse.ucalgary.ca/guides/) [![Video Lessons](https://img.shields.io/badge/Videos-Lessons-red?style=flat-square&logo=youtube)](https://timelapse.ucalgary.ca/guides/) [![Version](https://img.shields.io/badge/version-2.4.0.1-green?style=flat-square)](https://timelapse.ucalgary.ca/versions/)
 
