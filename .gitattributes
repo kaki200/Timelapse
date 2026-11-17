@@ -1,0 +1,4 @@
+# Git Bash scripts and upstream unified patches must retain Unix line endings.
+*.sh text eol=lf
+# Context lines in patches intentionally contain leading spaces and Makefile tabs.
+*.patch text eol=lf -whitespace

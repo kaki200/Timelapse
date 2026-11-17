@@ -47,6 +47,7 @@ namespace Timelapse.Constant
     {
         public const string LastUsed = "AvalonLayout_LastUsed4";
         public const string DataEntryOnTop = "AvalonLayout_DataEntryOnTop";
+        public const string DataEntryOnRight = "AvalonLayout_DataEntryOnRight";
         public const string DataEntryOnSide = "AvalonLayout_DataEntryOnSide";
         public const string DataEntryFloating = "AvalonLayout_DataEntryFloating";
         public const string Custom1 = "AvalonLayout_Custom01";
@@ -739,6 +740,12 @@ namespace Timelapse.Constant
         public const string VideoRewindSpeed = "VideoRewindSpeed";
         public const string VideoRepeat = "VideoRepeat";
         public const string VideoMute = "VideoMute";
+        public const string VideoMotionBboxEnabled = "VideoMotionBboxEnabled";
+        public const string VideoMotionBboxAlgorithm = "VideoMotionBboxAlgorithm";
+        public const string VideoMotionBboxDifferenceThreshold = "VideoMotionBboxDifferenceThreshold";
+        public const string VideoMotionBboxPadding = "VideoMotionBboxPadding";
+        public const string VideoMotionBboxBottomBandMode = "VideoMotionBboxBottomBandMode";
+        public const string VideoMotionBboxManualBottomBandPixels = "VideoMotionBboxManualBottomBandPixels";
 
     }
 

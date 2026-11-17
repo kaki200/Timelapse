@@ -72,6 +72,12 @@ namespace Timelapse.State
         public int VideoSpeed { get; set; }
         public double VideoFastForwardSpeed { get; set; } = 16;
         public double VideoRewindSpeed { get; set; } = 16;
+        public bool VideoMotionBboxEnabled { get; set; }
+        public string VideoMotionBboxAlgorithm { get; set; } = "FrameDifference";
+        public int VideoMotionBboxDifferenceThreshold { get; set; } = 18;
+        public double VideoMotionBboxPadding { get; set; } = 1.35;
+        public string VideoMotionBboxBottomBandMode { get; set; } = "Automatic";
+        public int VideoMotionBboxManualBottomBandPixels { get; set; }
         public Dictionary<string, string> FlagShortcutKeys { get; set; } = new();
         #endregion
 
@@ -154,6 +160,12 @@ namespace Timelapse.State
             VideoSpeed = registryKey.GetInteger(WindowRegistryKeys.VideoSpeed, 2);
             VideoFastForwardSpeed = Math.Clamp(registryKey.GetDouble(WindowRegistryKeys.VideoFastForwardSpeed, 16), 1, 64);
             VideoRewindSpeed = Math.Clamp(registryKey.GetDouble(WindowRegistryKeys.VideoRewindSpeed, 16), 1, 64);
+            VideoMotionBboxEnabled = registryKey.GetBoolean(WindowRegistryKeys.VideoMotionBboxEnabled, false);
+            VideoMotionBboxAlgorithm = registryKey.GetString(WindowRegistryKeys.VideoMotionBboxAlgorithm, "FrameDifference");
+            VideoMotionBboxDifferenceThreshold = Math.Clamp(registryKey.GetInteger(WindowRegistryKeys.VideoMotionBboxDifferenceThreshold, 18), 5, 64);
+            VideoMotionBboxPadding = Math.Clamp(registryKey.GetDouble(WindowRegistryKeys.VideoMotionBboxPadding, 1.35), 1.0, 2.0);
+            VideoMotionBboxBottomBandMode = registryKey.GetString(WindowRegistryKeys.VideoMotionBboxBottomBandMode, "Automatic");
+            VideoMotionBboxManualBottomBandPixels = Math.Max(0, registryKey.GetInteger(WindowRegistryKeys.VideoMotionBboxManualBottomBandPixels, 0));
             string flagKeysJson = registryKey.GetString(WindowRegistryKeys.FlagShortcutKeys, string.Empty);
             if (!string.IsNullOrEmpty(flagKeysJson))
             {
@@ -273,6 +285,12 @@ namespace Timelapse.State
             registryKey.Write(WindowRegistryKeys.VideoSpeed, VideoSpeed);
             registryKey.Write(WindowRegistryKeys.VideoFastForwardSpeed, VideoFastForwardSpeed);
             registryKey.Write(WindowRegistryKeys.VideoRewindSpeed, VideoRewindSpeed);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxEnabled, VideoMotionBboxEnabled);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxAlgorithm, VideoMotionBboxAlgorithm);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxDifferenceThreshold, VideoMotionBboxDifferenceThreshold);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxPadding, VideoMotionBboxPadding);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxBottomBandMode, VideoMotionBboxBottomBandMode);
+            registryKey.Write(WindowRegistryKeys.VideoMotionBboxManualBottomBandPixels, VideoMotionBboxManualBottomBandPixels);
             registryKey.Write(WindowRegistryKeys.FlagShortcutKeys, JsonConvert.SerializeObject(FlagShortcutKeys));
         }
 

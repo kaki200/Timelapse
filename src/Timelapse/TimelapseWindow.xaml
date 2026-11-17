@@ -30,6 +30,11 @@
 
     <Grid>
         <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="DataEntrySplitterColumn" Width="0" />
+                <ColumnDefinition x:Name="DataEntryRightColumn" Width="0" />
+            </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -40,7 +45,7 @@
             </Grid.RowDefinitions>
 
             <!-- #region Menu Bar -->
-            <Menu Grid.Row="0">
+            <Menu Grid.Row="0" Grid.ColumnSpan="3">
 
                 <!-- File Menu -->
                 <MenuItem Header="_File" IsTabStop="false" SubmenuOpened="File_SubmenuOpening">
@@ -651,6 +656,11 @@
                             <Image Source="Icons/LayoutDataEntryOnTop_32x.png" />
                         </MenuItem.Icon>
                     </MenuItem>
+                    <MenuItem Name="MenuItemWindowDataEntryOnRight" Header="Data Entry Panel on the _right (same window)" Click="MenuItemWindowRestore_Click" ToolTip="Keep data fields and checkboxes in one vertical column on the right. Drag the divider to resize." Tag="AvalonLayout_DataEntryOnRight">
+                        <MenuItem.Icon>
+                            <Image Source="Icons/LayoutDataEntryOnSide_32x.png" />
+                        </MenuItem.Icon>
+                    </MenuItem>
                     <MenuItem Name="MenuItemWindowDataEntryOnSide" Header="_Data Entry Panel in its own vertical window" Click="MenuItemWindowRestore_Click" ToolTip="Data entry panel appears at the window's side" Tag="AvalonLayout_DataEntryOnSide">
                         <MenuItem.Icon>
                             <Image Source="Icons/LayoutDataEntryOnSide_32x.png" />
@@ -989,7 +999,7 @@
             <!-- #endregion -->
 
             <!--#region DockingManager1-->
-            <xcad:DockingManager x:Name="DockingManager1" Grid.Row="1" AllowMixedOrientation="True" BorderBrush="Black" BorderThickness="1" LayoutUpdated="DockingManager_LayoutUpdated">
+            <xcad:DockingManager x:Name="DockingManager1" Grid.Row="1" Grid.ColumnSpan="3" AllowMixedOrientation="True" BorderBrush="Black" BorderThickness="1" LayoutUpdated="DockingManager_LayoutUpdated">
                 <xcad:DockingManager.DocumentHeaderTemplate>
                     <DataTemplate>
                         <StackPanel Orientation="Horizontal">
@@ -1128,8 +1138,13 @@
             </xcad:DockingManager>
             <!--#endregion-->
 
+            <GridSplitter x:Name="DataEntryRightSplitter" Grid.Row="1" Grid.RowSpan="3" Grid.Column="1"
+                          Visibility="Collapsed" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True"
+                          Background="#D5D9DF" ToolTip="Resize the data entry panel" />
+
             <!--#region FileNavigator-->
-            <Grid Grid.Row="2" Name="GridFileNavigator">
+            <Grid Grid.Row="2" Grid.ColumnSpan="3" Name="GridFileNavigator">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -1152,7 +1167,7 @@
             <!--#endregion-->
 
             <!--#region DockingManager2-->
-            <xcad:DockingManager x:Name="DockingManager2" AllowMixedOrientation="True" BorderBrush="Black" BorderThickness="1" Grid.Row="3" LayoutUpdated="DockingManager_LayoutUpdated">
+            <xcad:DockingManager x:Name="DockingManager2" AllowMixedOrientation="True" BorderBrush="Black" BorderThickness="1" Grid.Row="3" Grid.ColumnSpan="3" LayoutUpdated="DockingManager_LayoutUpdated">
                 <xcad:DockingManager.DocumentHeaderTemplate>
                     <DataTemplate>
                         <StackPanel Orientation="Horizontal">
@@ -1308,7 +1323,7 @@
             <!--#endregion-->
 
             <!--#region Status bar -->
-            <StatusBar Grid.Row="4" VerticalAlignment="Bottom" Name="StatusBar" ItemsSource="{Binding}">
+            <StatusBar Grid.Row="4" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Name="StatusBar" ItemsSource="{Binding}">
                 <StatusBar.ItemsPanel>
                     <ItemsPanelTemplate>
                         <Grid>

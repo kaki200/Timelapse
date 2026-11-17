@@ -1,6 +1,5 @@
 ﻿using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
-using NReco.VideoConverter;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -119,100 +118,22 @@ namespace Timelapse.Images
             try
             {
 
-                //Saul TO DO:
-                // Note: not sure of the cost of creating a new converter every time. May be better to reuse it?
-                Stream outputBitmapAsStream = new MemoryStream();
-                FFMpegConverter ffMpeg = new();
-
-                // IMPORTANT: Set the ffmpeg tool directory to the application's directory.
-                // For MSI installations in Program Files, we need to copy ffmpeg.exe to a user-writable
-                // location because Windows restricts execution permissions in Program Files.
-                // For per-user installations (e.g., AppData), we can use the installation directory directly.
-                // This fixes two issues:
-                // 1. Working directory may be different (e.g., C:\Windows\System32)
-                // 2. Program Files requires admin privileges for file operations
-                try
-                {
-                    string dir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly()?.Location);
-                    if (dir != null)
-                    {
-                        string sourceFFmpegPath = Path.Combine(dir, "ffmpeg.exe");
-
-                        // Check if the installation directory is writable by attempting to create a test file
-                        bool isInstallDirWritable = false;
-                        try
-                        {
-                            string testFile = Path.Combine(dir, $"test_{Guid.NewGuid()}.tmp");
-                            File.WriteAllText(testFile, "test");
-                            File.Delete(testFile);
-                            isInstallDirWritable = true;
-                        }
-                        catch
-                        {
-                            // Installation directory is not writable (likely Program Files)
-                        }
-
-                        if (isInstallDirWritable && File.Exists(sourceFFmpegPath))
-                        {
-                            // Installation directory is writable (probably per-user install in AppData)
-                            // Use it directly - no need to copy to temp
-                            ffMpeg.FFMpegToolPath = dir;
-                        }
-                        else
-                        {
-                            // Installation directory is read-only (probably installed in C:\Program Files
-                            // which is non-writeable)
-                            // Copy to temp directory that the user has write access to
-                            string tempFFmpegDir = Path.Combine(Path.GetTempPath(), "Timelapse", "ffmpeg");
-                            string tempFFmpegPath = Path.Combine(tempFFmpegDir, "ffmpeg.exe");
-
-                            // Create temp directory if needed
-                            if (!System.IO.Directory.Exists(tempFFmpegDir))
-                            {
-                                System.IO.Directory.CreateDirectory(tempFFmpegDir);
-                            }
-
-                            // Copy ffmpeg.exe to temp location if not already there or if source is newer
-                            if (File.Exists(sourceFFmpegPath) &&
-                                (!File.Exists(tempFFmpegPath) ||
-                                 File.GetLastWriteTime(sourceFFmpegPath) > File.GetLastWriteTime(tempFFmpegPath)))
-                            {
-                                File.Copy(sourceFFmpegPath, tempFFmpegPath, true);
-                            }
-
-                            // Point NReco to the temp directory
-                            ffMpeg.FFMpegToolPath = File.Exists(tempFFmpegPath)
-                                ? tempFFmpegDir
-                                // Fallback: try using the installation directory directly
-                                : dir;
-                        }
-                    }
-                }
-                catch
-                {
-                    // If we can't determine the path, let NReco use its default search mechanism
-                }
-
-                if (frameTime == null || frameTime == 0 || float.IsNaN((float)frameTime))
-                {
-                    ffMpeg.GetVideoThumbnail(filePath, outputBitmapAsStream);
-                }
-                else
+                if (frameTime.HasValue && (!float.IsFinite(frameTime.Value) || frameTime.Value <= 0))
+                    frameTime = null;
+                if (frameTime.HasValue)
                 {
                     // Get a particular frame in the video by its time.
                     // We also test to ensure that the given time is within the actual video duration as otherwise
                     // it would cause an exception. Note that GetVideoDuration returns null if it can't get the actual duration
                     float? actualDuration = FilesFolders.GetVideoDuration(filePath);
-                    if (null != actualDuration && actualDuration != 0 && frameTime <= actualDuration)
-                    {
-                       ffMpeg.GetVideoThumbnail(filePath, outputBitmapAsStream, frameTime);
-                    }
-                    else
+                    if (null == actualDuration || actualDuration == 0 || frameTime > actualDuration)
                     {
                         // As we have no valid time, just get the first frame
-                        ffMpeg.GetVideoThumbnail(filePath, outputBitmapAsStream);
+                        frameTime = null;
                     }
                 }
+
+                using MemoryStream outputBitmapAsStream = FfmpegThumbnail.Extract(filePath, frameTime);
 
                 // Scale the video to the desired dimension
                 outputBitmapAsStream.Position = 0;
@@ -229,7 +150,7 @@ namespace Timelapse.Images
                         bitmap.DecodePixelHeight = desiredWidthOrHeight.Value;
                     }
                 }
-                bitmap.CacheOption = BitmapCacheOption.None;
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 bitmap.StreamSource = outputBitmapAsStream;
                 bitmap.EndInit();
                 bitmap.Freeze();
@@ -239,7 +160,7 @@ namespace Timelapse.Images
             catch
             {
                 // Couldn't get the thumbnail using FFMPEG. Fallback to try getting it using the MediaEncoder
-                // Note. One of the reasons for this failure can occur if we call ffMpeg.GetVideoThumbnail(filePath, outputBitmapAsStream, frameTime);
+                // A seek beyond the end or an unsupported codec can also cause this fallback.
                 // with a frame time longer than the video.
                 return GetVideoBitmapFromFileUsingMediaEncoder(filePath, desiredWidthOrHeight, displayIntent, imageDimension, out isCorruptOrMissing);
                 // We don't print the exception // (Exception exception)
@@ -248,7 +169,7 @@ namespace Timelapse.Images
         }
         
         // This alternate way to get an image from a video file uses the media encoder.
-        // While it works, its ~twice as slow as using NRECO FFMPeg.
+        // It is retained as a fallback when FFmpeg cannot decode a particular file.
         // We do include it as a fallback for the odd case where ffmpeg doesn't work (I had that with a single video).
         public static BitmapSource GetVideoBitmapFromFileUsingMediaEncoder(string filePath, int? desiredWidth, ImageDisplayIntentEnum displayIntent, ImageDimensionEnum _, out bool isCorruptOrMissing)
         {

@@ -128,7 +128,7 @@ namespace Timelapse
             // the VideoPlayer control.
             FlyleafLib.Engine.Start(new FlyleafLib.EngineConfig
             {
-                FFmpegPath = ":FFmpeg"
+                FFmpegPath = Path.Combine(AppContext.BaseDirectory, "FFmpeg")
             });
 
             InitializeComponent();
@@ -391,6 +391,7 @@ namespace Timelapse
             if (!this.IsLoaded)
             {
                 e.Handled = true;
+                AppLog.Error("Startup failed before the main window was loaded.", e.Exception);
                 System.Windows.MessageBox.Show(
                     e.Exception.ToString(),
                     "Timelapse failed to start",
@@ -647,7 +648,7 @@ namespace Timelapse
         // When the Control Grid size changes, reposition the CopyPrevious Button depending on the width/height ratio
         private void ControlGrid_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            if (e.NewSize.Height + 212 > e.NewSize.Width) // We include 250, as otherwise it will bounce around as repositioning the button changes the size
+            if (IsDataEntryPanelDockedRight || e.NewSize.Height + 212 > e.NewSize.Width) // Keep the button below a vertical list.
             {
                 // Place the button at the bottom right of the grid
                 Grid.SetRow(CopyPreviousValuesButton, 1);

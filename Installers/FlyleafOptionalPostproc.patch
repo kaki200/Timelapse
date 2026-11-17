@@ -1,0 +1,13 @@
+--- a/Bindings/FFmpeg.utils.cs
++++ b/Bindings/FFmpeg.utils.cs
+@@ -13,7 +13,9 @@
+         if (profile != LoadProfile.Main)
+             LoadLibrary(path, SWSCALE, validateVersion);
+         LoadLibrary(path, SWRESAMPLE, validateVersion);
+-        if (profile != LoadProfile.Main)
++        // Modified by kaki200 fork, 2026-11-16: libpostproc is GPL-only and
++        // is not used by Timelapse/Flyleaf playback. Allow LGPL-only builds.
++        if (profile != LoadProfile.Main && Directory.GetFiles(path, "*postproc*.dll").Length != 0)
+             LoadLibrary(path, POSTPROC, validateVersion);
+         LoadLibrary(path, AVCODEC, validateVersion);
+         LoadLibrary(path, AVFORMAT, validateVersion);

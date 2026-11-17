@@ -58,7 +58,7 @@ namespace Timelapse.ExifTool
         public string ExifToolPath { get; }
         public string ExifToolVersion { get; private set; }
 
-        private const string ExeName = "exiftool(-k).exe";
+        private const string ExeName = "exiftool.exe";
         private const string Arguments = "-a -m -q -q -stay_open True -@ - -common_args -G1 -s -d \"%Y-%m-%d %H:%M:%S\" -c \"%d %d %.6f\" -t";   // -G1 -s gives [Group]TagName format
        
         private const string ArgumentsFaster = "-a -m -q -q -stay_open True -@ - -common_args -G1 -s -d \"%Y-%m-%d %H:%M:%S\" -c \"%d %d %.6f\" -t";   // -G1 -s gives [Group]TagName format
@@ -143,6 +143,9 @@ namespace Timelapse.ExifTool
             else
                 ExifToolPath = path;
 
+            if (string.IsNullOrEmpty(path) && !File.Exists(ExifToolPath))
+                ExifToolPath = Path.Combine(AppContext.BaseDirectory, "exiftool(-k).exe");
+
             if (!File.Exists(ExifToolPath))
                 throw new ExifToolException($"{ExeName} not found");
 
@@ -156,6 +159,7 @@ namespace Timelapse.ExifTool
                 RedirectStandardError = true,
                 RedirectStandardInput = true
             };
+            _psi.Environment["LC_ALL"] = "C";
 
             Status = ExeStatus.Stopped;
         }
@@ -765,13 +769,14 @@ namespace Timelapse.ExifTool
                 string dir = Path.GetDirectoryName(Assembly.GetEntryAssembly()?.Location);
                 if (dir == null)
                 {
-                    return "exiftool(-k).exe";
+                    return "exiftool.exe";
                 }
-                return Path.Combine(dir, "exiftool(-k).exe");
+                string executable = Path.Combine(dir, "exiftool.exe");
+                return File.Exists(executable) ? executable : Path.Combine(dir, "exiftool(-k).exe");
             }
             catch
             {
-                return "exiftool(-k).exe";
+                return "exiftool.exe";
             }
         }
 
@@ -797,6 +802,7 @@ namespace Timelapse.ExifTool
                     RedirectStandardError = true
                 };
 
+                psi.Environment["LC_ALL"] = "C";
                 _process = Process.Start(psi);
                 if (_process == null)
                     throw new Exception("Failed to start ExifTool process");

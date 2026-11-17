@@ -21,15 +21,18 @@
                 <ResourceDictionary Source="../ControlsCore/Styles/FlagStyles.xaml"/>
                 <ResourceDictionary Source="../ControlsCore/Styles/MultiChoiceStyles.xaml"/>
             </ResourceDictionary.MergedDictionaries>
-
+            <DataTemplate x:Key="VerticalFlagLabelTemplate">
+                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+            </DataTemplate>
         </ResourceDictionary>
     </Control.Resources>
     <!--#endregion-->
 
     <!--#region the ControlGrid definition that appears in the DataPanel.  -->
     <!-- The controls will be inserted dynamically through Code Behind -->
-    <RichTextBox IsEnabled="True" IsDocumentEnabled="True" IsReadOnly="True" IsUndoEnabled="False" >
-        <FlowDocument  >
+    <RichTextBox IsEnabled="True" IsDocumentEnabled="True" IsReadOnly="True" IsUndoEnabled="False"
+                 BorderThickness="0" Padding="4" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
+        <FlowDocument PagePadding="0">
             <Paragraph  Name="ControlGrid" TextAlignment="Left" >
                 <Floater  HorizontalAlignment="Right" Width="75" Margin="0" Padding="0" >
                     <BlockUIContainer Name="ButtonLocation" Margin="0" Padding="0">

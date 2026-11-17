@@ -15,7 +15,7 @@ namespace Timelapse.Util
         #region Private patial lists of required files, used to see if at least some of the required dependencies are present
         private static readonly List<string> SelectedRequiredBinaries =
         [
-            "exiftool(-k).exe",
+            "exiftool.exe",
 
             // MetadataExtractor
             "MetadataExtractor.dll",
@@ -24,8 +24,9 @@ namespace Timelapse.Util
             //  Newtonsoft
             "Newtonsoft.Json.dll",
 
-            // SixLabors ImageSharp
-            "SixLabors.ImageSharp.dll",
+            // OpenCV (image adjustments and motion analysis)
+            "OpenCvSharp.dll",
+            "OpenCvSharpExtern.dll",
 
             // SQLite
             "System.Data.SQLite.dll",
@@ -40,8 +41,7 @@ namespace Timelapse.Util
             "Microsoft.WindowsAPICodePack.Shell.dll", // just for TimelapseWindow's use of CommonOpenFileDialog
             
             // FFMPEG (for video and thumbnail creation)
-            "ffmpeg.exe",
-            "NReco.VideoConverter.dll"
+            "FFmpeg\\ffmpeg.exe"
 
         ];
         #endregion
@@ -67,6 +67,8 @@ namespace Timelapse.Util
             }
             foreach (string binaryName in SelectedRequiredBinaries)
             {
+                if (binaryName == "exiftool.exe" && File.Exists(Path.Combine(directoryContainingCurrentExecutable, "exiftool(-k).exe")))
+                    continue;
                 if (File.Exists(Path.Combine(directoryContainingCurrentExecutable, binaryName)) == false)
                 {
                     binariesAllPresent = false;

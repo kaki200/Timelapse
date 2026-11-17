@@ -1,5 +1,16 @@
 # Timelapse
 
+## このフォークのインストーラー
+
+`Timelapse-Kaki-2.5.0.9-win-x64.msi` をダブルクリックしてインストールした後、
+デスクトップの **Timelapse (kaki200 fork)** を起動してください。
+ExifTool・Perl・LGPL版FFmpeg・.NET・必要なVCランタイムを同梱しているため、
+個別のダウンロードやPATH設定は不要です。動画の動体枠は、再生操作欄の
+**Motion BBox** をONにして動画を再生すると表示されます。
+
+ビルド方法と同梱ライセンスは [インストーラーの説明](Installers/TimelapseInstaller-PerUser/README.md)
+および [第三者ライセンスの説明](Installers/THIRD-PARTY-NOTICES.md) を参照してください。
+
 [![Download](https://img.shields.io/badge/Download-Timelapse-blue?style=flat-square)](https://timelapse.ucalgary.ca/download/) [![Documentation](https://img.shields.io/badge/Documentation-Website-blue?style=flat-square)](https://timelapse.ucalgary.ca/) [![Tutorial Guides](https://img.shields.io/badge/Guides-Tutorials-orange?style=flat-square)](https://timelapse.ucalgary.ca/guides/) [![Video Lessons](https://img.shields.io/badge/Videos-Lessons-red?style=flat-square&logo=youtube)](https://timelapse.ucalgary.ca/guides/) [![Version](https://img.shields.io/badge/version-2.4.0.1-green?style=flat-square)](https://timelapse.ucalgary.ca/versions/)
 
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey?style=flat-square)](LICENSE.md) [![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey?style=flat-square)](https://timelapse.ucalgary.ca/) [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/) [![GitHub Issues](https://img.shields.io/github/issues/saulgreenberg/Timelapse?style=flat-square)](https://github.com/saulgreenberg/Timelapse/issues) [![GitHub Stars](https://img.shields.io/github/stars/saulgreenberg/Timelapse?style=flat-square)](https://github.com/saulgreenberg/Timelapse/stargazers)
@@ -24,13 +35,18 @@ This fork keeps the original Timelapse workflow while adding the following funct
 * Keyboard shortcuts can be assigned to choice/flag fields. The assigned key is shown next to the field label and toggles the corresponding flag without requiring a mouse click.
 * Video playback has been migrated to [Flyleaf](https://github.com/SuRGeoNix/Flyleaf), with GPU-backed zoom and pan, mouse-wheel zoom, and direct drag movement.
 * Video keyboard controls are retained: Up/Down provide continuous fast-forward and rewind while a key is held, including support for the configured playback speeds.
+* Optional live motion bounding boxes use lightweight local OpenCV analysis, without Python, CUDA or a downloaded model. Enable **Motion BBox** in the video controls; sensitivity and timestamp-band exclusion are available in Video Player Options.
+* **Window > Data Entry Panel on the right (same window)** keeps checkboxes in a vertical list beside the video. Flag fields have distinct light background colors, and the layout and sidebar width are saved with the window layout. Motion BBox outlines are thinner (1.5/1 display units).
 * Video seeking and focus handling were adjusted for folders containing both images and videos, so keyboard navigation continues to work when the displayed file type changes.
+* An optional lightweight live motion BBox overlay is available for video review. It uses a 640-pixel OpenCV frame-difference pipeline by default, runs independently from playback at up to 15 updates per second, and drops stale work instead of building a queue. The overlay is display-only and does not alter videos or stored recognition boxes.
+
+The `Motion BBox` checkbox in the video controls enables the overlay. `Options > Video Player Options` provides the algorithm (frame difference, MOG2, or hybrid), sensitivity, box padding, and bottom timestamp-band handling (automatic, manual pixels, or none). Frame difference with normal sensitivity is the recommended low-overhead setting. A motion box is a review aid, not an animal detector: an animal that remains still can disappear, motion from vegetation can be shown, and movement limited to a head or limb may initially produce a partial box.
 
 ### FFmpeg files are not included in this repository
 
-The FFmpeg native binaries are intentionally excluded from the Git repository and from source checkouts. They are large third-party runtime files and are distributed separately under the applicable FFmpeg/Flyleaf licenses. To build or run the Flyleaf video player from a source checkout, obtain the matching native FFmpeg binaries from the `Flyleaf.FFmpeg` package (or another compatible FFmpeg distribution) and place them in `src\\Timelapse\\FFmpeg\\` as described in the package documentation. Do not commit those binaries to this repository.
+The FFmpeg native binaries are excluded from source checkouts. The self-contained MSI includes an audited LGPL-only FFmpeg build and its corresponding source. `Installers/PrepareDependencies.ps1` downloads the pinned sources and builds the matching executable/shared libraries into `.installer-cache/payload/FFmpeg`. The `Flyleaf.FFmpeg` NuGet package is a managed binding, not a native DLL distribution.
 
-ExifTool is also a separate dependency; see [Prerequisites](#prerequisites) for its download and placement instructions.
+The same preparation script supplies ExifTool plus its Perl files. End users of the MSI need no separate dependency setup.
 
 ### Contributing
 
@@ -59,15 +75,11 @@ Development is against .NET 10 (net10.0-windows for WPF applications).
     * .[Net 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) (the .Net 10 desktop runtime works, but generates non-critical build errors as it does not contain System.Private.CoreLib.dll)
     * [C++ Redistributables](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)   (used by TimelapseTemplateEditor and TimelapseViewOnly)
     * [WiX Toolset v6.0+](https://wixtoolset.org/) (only required if you are building MSI installers)
-  * These exe's must be downloaded and located in the Timelapse folder (not the root folder)
-    * [FFMPEG](https://www.ffmpeg.org/) - only ffmpeg.exe is required (the built release included other executables)
-    * [Exiftool](https://exiftool.org/) - Download and unzip the Windows 64-bit build, then move the exiftool(-k).exe and the exiftool_files folder into the Timelapse folder.
+  * For a complete dependency payload, run `Installers/PrepareDependencies.ps1`. The MSI build invokes it automatically.
   
 ### Building Timelapse
 To successfully build Timelapse, do the following.
-0. Timelapse uses two executables that are not included in this repository. These exes and their dependencies should be downloaded and copied into the Timelapse folder. See Prerequiesites
-   * [FFMPEG](https://www.ffmpeg.org/) and
-   * [ExifTool](https://exiftool.org/).
+0. Prepare dependencies, then pass `-p:BundledDependenciesDir=C:\absolute\path\to\Timelapse\.installer-cache\payload` to `dotnet build` or `dotnet publish`, or use the self-contained MSI build command above.
 1. Using Visual Studio, open Timelapse.sln located in the top level folder, OR use the .NET CLI with `dotnet build Timelapse.sln`.
 2. Build and try to run the projects:
    * Timelapse
@@ -118,8 +130,9 @@ For more details, see `Installers\Readme.txt` and the README files in each insta
 ### Dependencies
 * Timelapse software requires .NET 10.  It is included in both the per-user MSI and zip installation, but not included in the per-machine MSI installation.
 * TimelapseTemplateEditor and TimelapseViewOnly require the C++ Redistributables. Necessary dlls from that are included in both the per-user MSI and zip installation, but not included in the per-machine MSI installation.
-* Timelapse requires FFMPEG and ExifTool, that must be downloaded separately (see Building section)."
+* The fork's self-contained per-user installer includes FFmpeg and ExifTool. Developers should prepare the dependency payload as described in the Building section.
 * Timelapse uses various Nuget packages to automatically retrieve other required dlls. 
+* The optional live motion BBox feature uses matched `OpenCvSharp4` and `OpenCvSharp4.runtime.win` packages. The x64 native `OpenCvSharpExtern.dll` is copied into publish output by NuGet; Python and CUDA are not required.
 
 ### Other things
 * The License file lists various required 3rd party dependencies, packages and executables. Each specify their own particular license terms.

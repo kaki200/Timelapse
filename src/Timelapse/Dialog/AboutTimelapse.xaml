@@ -81,11 +81,13 @@
                 <Run Text="Timelapse incorporates 3rd party software under their license terms. We thank their developers."/>
             </TextBlock>
             <TextBlock FontSize="11" FontStyle="Italic" HorizontalAlignment="Left" Margin="70,0,10,0"  VerticalAlignment="Top" DataContext="{Binding}" TextWrapping="Wrap" >      
-                <Run Text="Extended WPF Toolkit (xceed.org: Community License)  &#x2022;  ExifToolWrapper (brain2cpu.com) &#x2022; ExifTool (Phil Harvey)"/>
+                <Run Text="TimelapseWpf.Toolkit / AvalonDock (MS-PL) &#x2022; ExifToolWrapper (public domain) &#x2022; ExifTool (Phil Harvey)"/>
                  <LineBreak/>
-                <Run Text="ImageSharp (Six Labors) &#x2022; MetadataExtractor+XMPCore (Drew Noakes)  &#x2022;  Newtonsoft (Json.net)"/>
+                <Run Text="MetadataExtractor+XmpCore (Drew Noakes) &#x2022; Newtonsoft.Json"/>
                 <LineBreak/> 
-                <Run Text="System.Data.Sqlite (system.data.sqlite.org) &#x2022; NReco Video Converter (nrecosite.com) &#x2022; FFMpeg (ffmpeg.org)"/>
+                <Run Text="System.Data.SQLite &#x2022; Flyleaf (LGPL-3.0+) &#x2022; FFmpeg (LGPL-2.1+) &#x2022; OpenCvSharp (Apache-2.0)"/>
+                <LineBreak/>
+                <Run Text="See the installed Licenses folder for license texts and corresponding library sources."/>
             </TextBlock>
         </StackPanel>
         

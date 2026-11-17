@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Modified LGPL-3.0-or-later bindings. Corresponding sources and patch are installed with the app. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Flyleaf.FFmpeg.Bindings</AssemblyName><Version>7.1.1</Version>
+    <Authors>SuRGeoNix; kaki200 fork</Authors>
+    <Copyright>Copyright SuRGeoNix. Loader modified by kaki200 fork, 2026-11-16.</Copyright>
+    <RootNamespace>Flyleaf.FFmpeg</RootNamespace><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS8981;CS1573;CS1591</NoWarn>
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\.installer-cache\bindings-source\Flyleaf.FFmpeg.Generator-e66f21d30610fa7a4cc628f52fbce6c1c578840b\Bindings\*.cs" />
+  </ItemGroup>
+</Project>

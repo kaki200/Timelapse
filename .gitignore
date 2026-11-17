@@ -138,3 +138,13 @@ $RECYCLE.BIN/
 $tf/
 *-cwd
 ToDo/TreeViewForSpeciesNet.md
+# Local/offline NuGet feeds and restore output used by validation
+.nuget-local/
+.nuget-packages/
+.installer-cache/
+.installer-build/
+
+# Local native dependencies and machine-specific validation evidence
+/src/Timelapse/FFmpeg/
+/validation/installer_*/
+/validation/motion_bbox_20261013/

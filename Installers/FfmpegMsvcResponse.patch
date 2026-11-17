@@ -1,0 +1,28 @@
+--- a/compat/windows/makedef
++++ b/compat/windows/makedef
+@@ -36,7 +36,12 @@
+     exit 1
+ fi
+ 
+-for object in "$@"; do
++# Timelapse installer build: accept a response file to avoid the Windows command-line limit.
++object_list="$*"
++if [ "${1#@}" != "$1" ]; then
++    object_list=$(cat "${1#@}")
++fi
++for object in $object_list; do
+     if [ ! -f "$object" ]; then
+         echo "Object does not exist: ${object}" >&2
+         exit 1
+--- a/ffbuild/library.mak
++++ b/ffbuild/library.mak
+@@ -62,6 +62,7 @@
+ $(SUBDIR)$(SLIBNAME_WITH_MAJOR): $(OBJS) $(SHLIBOBJS) $(SLIBOBJS) $(SUBDIR)lib$(NAME).ver
+-	$(SLIB_CREATE_DEF_CMD)
+-	$$(LD) $(SHFLAGS) $(LDFLAGS) $(LDSOFLAGS) $$(LD_O) $$(filter %.o,$$^) $(FFEXTRALIBS)
++	$$(file >$$@.objects,$(sort $(OBJS) $(SHLIBOBJS) $(SLIBOBJS)))
++	EXTERN_PREFIX="$(EXTERN_PREFIX)" $$(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver @$$@.objects > $$(@:$(SLIBSUF)=.def)
++	$$(LD) $(SHFLAGS) $(LDFLAGS) $(LDSOFLAGS) $$(LD_O) @$$@.objects $(FFEXTRALIBS)
+ 	$(SLIB_EXTRA_CMD)
+ 
+ ifdef SUBDIR

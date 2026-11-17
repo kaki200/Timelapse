@@ -19,6 +19,7 @@ namespace Timelapse.ControlsDataEntry
     public class DataEntryFlag : DataEntryControl<CheckBox, Label>
     {
         private readonly FlagControlCore core;
+        private readonly DataTemplate verticalLabelTemplate;
 
         #region Public Properties
         // Return the TopLeft corner of the content control as a point
@@ -42,11 +43,54 @@ namespace Timelapse.ControlsDataEntry
         {
             // Create core shared implementation
             core = new FlagControlCore(ContentControl);
+            verticalLabelTemplate = (DataTemplate)styleProvider.FindResource("VerticalFlagLabelTemplate");
 
             // Callback used to allow Enter to select the highlit item
             ContentControl.PreviewKeyDown += ContentControl_PreviewKeyDown;
         }
         #endregion
+
+        // Adjacent flag fields have distinct, quiet colors; labels and shortcuts remain
+        // the primary identifiers. Never persist presentation colors into user data.
+        private static readonly Color[] ItemColors =
+        [
+            Color.FromRgb(231, 241, 252), Color.FromRgb(232, 245, 235),
+            Color.FromRgb(255, 243, 219), Color.FromRgb(242, 235, 250),
+            Color.FromRgb(226, 245, 245), Color.FromRgb(252, 234, 240),
+            Color.FromRgb(238, 240, 248), Color.FromRgb(245, 242, 224)
+        ];
+
+        internal void ApplyItemAppearance(int index, bool vertical)
+        {
+            Color color = DataLabel == DatabaseColumn.DeleteFlag
+                ? Color.FromRgb(253, 229, 229)
+                : ItemColors[index % ItemColors.Length];
+            SolidColorBrush background = new(color);
+            background.Freeze();
+            Container.Background = background;
+            LabelControl.Target = ContentControl;
+            LabelControl.HorizontalAlignment = HorizontalAlignment.Left;
+            LabelControl.VerticalContentAlignment = VerticalAlignment.Center;
+            LabelControl.Padding = new Thickness(5, 0, 5, 0);
+            LabelControl.ContentTemplate = vertical ? verticalLabelTemplate : null;
+            LabelControl.Height = vertical ? double.NaN : 25;
+            Container.Height = vertical ? double.NaN : 35;
+            Container.MinHeight = vertical ? 32 : 0;
+            // Keep the checkboxes aligned on the left in the vertical list.
+            Container.Children.Clear();
+            if (vertical)
+            {
+                Container.Children.Add(ContentControl);
+                Container.Children.Add(LabelControl);
+                ContentControl.Margin = new Thickness(7, 0, 2, 0);
+            }
+            else
+            {
+                Container.Children.Add(LabelControl);
+                Container.Children.Add(ContentControl);
+                ContentControl.ClearValue(FrameworkElement.MarginProperty);
+            }
+        }
 
         #region Event Handlers
         // Note: DataEntryControlContainer_PreviewKeyDown will handle all the basic shortcut keys eg, Ctl-left,right,up,down etc

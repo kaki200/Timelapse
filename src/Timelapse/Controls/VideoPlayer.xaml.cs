@@ -1,15 +1,22 @@
 ﻿using Microsoft.WindowsAPICodePack.Shell;
 using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
 using System;
+using System.Buffers;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Timelapse.Constant;
 using Timelapse.DataStructures;
 using Timelapse.Images;
+using Timelapse.MotionDetection;
 using Timelapse.Util;
 using File = System.IO.File;
 using RadioButton = System.Windows.Controls.RadioButton;
@@ -56,7 +63,11 @@ namespace Timelapse.Controls
         internal TimeSpan CurrentPosition
         {
             get => TimeSpan.FromTicks(this.player.CurTime);
-            set => this.player.CurTime = value.Ticks;
+            set
+            {
+                this.InvalidateMotionAnalysis();
+                this.player.CurTime = value.Ticks;
+            }
         }
 
         #endregion
@@ -84,6 +95,19 @@ namespace Timelapse.Controls
         // Timers
         private readonly DispatcherTimer TimerUpdatePosition;
         private readonly DispatcherTimer TimerKeyboardSeek;
+        private readonly DispatcherTimer TimerMotionAnalysis;
+
+        // Motion analysis deliberately has one worker and no queue. If analysis has not
+        // finished by the next tick, that tick is dropped so playback remains responsive.
+        private readonly MotionBboxEngine motionBboxEngine = new();
+        private readonly Rectangle[] motionRectangles;
+        private int motionAnalysisInFlight;
+        private int motionShutdownRequested;
+        private long motionGeneration;
+        private long lastMotionSubmittedTicks = long.MinValue;
+        private MotionBboxResult lastMotionResult;
+        private MotionBboxResult pendingMotionResult;
+        private int motionPresentationScheduled;
 
         // Holding Up/Down performs a smooth seek while preserving whether playback was
         // running before the key was pressed.
@@ -134,8 +158,22 @@ namespace Timelapse.Controls
             TransformGroup overlayTransform = new();
             overlayTransform.Children.Add(this.videoOverlayScale);
             overlayTransform.Children.Add(this.videoOverlayTranslation);
-            this.VideoOverlayCanvas.RenderTransform = overlayTransform;
+            this.VideoOverlayRoot.RenderTransform = overlayTransform;
             this.AttachFlyleafInputHandlers();
+
+            this.motionRectangles = new Rectangle[4];
+            for (int index = 0; index < this.motionRectangles.Length; index++)
+            {
+                Rectangle rectangle = new()
+                {
+                    Stroke = index == 0 ? Brushes.Orange : Brushes.Gold,
+                    StrokeThickness = index == 0 ? 1.5 : 1,
+                    Visibility = Visibility.Collapsed,
+                    IsHitTestVisible = false
+                };
+                this.motionRectangles[index] = rectangle;
+                this.MotionOverlayCanvas.Children.Add(rectangle);
+            }
 
             this.player = new FlyleafLib.MediaPlayer.Player();
             this.FlyleafHostActive.Player = this.player;
@@ -147,7 +185,9 @@ namespace Timelapse.Controls
             // Initialize the timer that updates the UI to reflect the current video position 
             this.TimerUpdatePosition = new() { Interval = TimeSpan.FromMilliseconds(125.0) };
             this.TimerKeyboardSeek = new() { Interval = TimeSpan.FromMilliseconds(33.0) };
+            this.TimerMotionAnalysis = new() { Interval = TimeSpan.FromMilliseconds(1000.0 / 15.0) };
             this.TimerKeyboardSeek.Tick += TimerKeyboardSeek_Tick;
+            this.TimerMotionAnalysis.Tick += TimerMotionAnalysis_Tick;
 
             // Start with the video controls disabled
             this.IsEnabled = false;
@@ -172,6 +212,7 @@ namespace Timelapse.Controls
             this.CBAutoPlay.IsChecked = GlobalReferences.TimelapseState.VideoAutoPlay;
             this.CBRepeat.IsChecked = GlobalReferences.TimelapseState.VideoRepeat;
             this.CBMute.IsChecked = GlobalReferences.TimelapseState.VideoMute;
+            this.CBMotionBbox.IsChecked = GlobalReferences.TimelapseState.VideoMotionBboxEnabled;
             this.CBMute_CheckedChanged(null, null); // and set the mute state
 
 
@@ -222,6 +263,9 @@ namespace Timelapse.Controls
 
             this.CBRepeat.Checked += CBRepeat_CheckChanged;
             this.CBRepeat.Unchecked += CBRepeat_CheckChanged;
+
+            this.CBMotionBbox.Checked += CBMotionBbox_CheckedChanged;
+            this.CBMotionBbox.Unchecked += CBMotionBbox_CheckedChanged;
         }
 
         // Set the flag to indicate that the video player is no longer loaded.
@@ -229,6 +273,8 @@ namespace Timelapse.Controls
         {
             this.CancelKeyboardSeek();
             this.TimerUpdatePosition.Stop();
+            this.TimerMotionAnalysis.Stop();
+            this.InvalidateMotionAnalysis();
             this.player.Pause();
         }
 
@@ -236,13 +282,21 @@ namespace Timelapse.Controls
         {
             this.CancelKeyboardSeek();
             this.TimerUpdatePosition.Stop();
+            this.TimerMotionAnalysis.Stop();
+            this.InvalidateMotionAnalysis();
             this.TimerKeyboardSeek.Tick -= TimerKeyboardSeek_Tick;
+            this.TimerMotionAnalysis.Tick -= TimerMotionAnalysis_Tick;
             this.FlyleafHostActive.OverlayCreated -= FlyleafHost_OverlayCreated;
             this.FlyleafHostActive.SurfaceCreated -= FlyleafHost_SurfaceCreated;
             this.SetFlyleafInputHandlers(ref this.inputOverlay, null);
             this.SetFlyleafInputHandlers(ref this.inputSurface, null);
             this.player.OpenCompleted -= Player_OpenCompleted;
             this.player.PlaybackStopped -= Player_PlaybackStopped;
+            Volatile.Write(ref this.motionShutdownRequested, 1);
+            if (Volatile.Read(ref this.motionAnalysisInFlight) == 0)
+            {
+                this.motionBboxEngine.Dispose();
+            }
             this.player.Dispose();
             this.FlyleafHostActive.Dispose();
         }
@@ -393,6 +447,8 @@ namespace Timelapse.Controls
         {
             this.CancelKeyboardSeek();
             this.TimerUpdatePosition.Stop();
+            this.TimerMotionAnalysis.Stop();
+            this.InvalidateMotionAnalysis();
             this.isSourceReady = false;
 
             // OpenAsync does not immediately clear CanPlay. Without explicitly closing the
@@ -439,6 +495,8 @@ namespace Timelapse.Controls
         {
             this.CancelKeyboardSeek();
             this.TimerUpdatePosition.Stop();
+            this.TimerMotionAnalysis.Stop();
+            this.InvalidateMotionAnalysis();
             this.sourceUri = null;
             this.isSourceReady = false;
             this.IsEnabled = false;
@@ -483,6 +541,8 @@ namespace Timelapse.Controls
 
             this.isSourceReady = true;
             this.IsEnabled = true;
+            this.lastMotionSubmittedTicks = long.MinValue;
+            this.TimerMotionAnalysis.Start();
 
             // Determine and set the FrameRate, FrameToShow, VideoDuraton and Slider Scrubbing Duration values
             this.DoSetFrameRateAndFrameToShowValues();
@@ -636,6 +696,7 @@ namespace Timelapse.Controls
                 this.player.Pause();
                 this.TimerUpdatePosition.Stop();
                 this.isKeyboardSeeking = true;
+                this.InvalidateMotionAnalysis();
                 this.keyboardSeekTargetTicks = this.player.CurTime;
                 this.lastKeyboardSeekUpdate = DateTime.UtcNow;
             }
@@ -664,6 +725,7 @@ namespace Timelapse.Controls
 
             // A Flyleaf seek completes asynchronously. Keep the final logical target instead
             // of allowing a late completion from an older seek to snap the position backwards.
+            this.InvalidateMotionAnalysis();
             this.player.CurTime = finalSeekTargetTicks;
 
             if (resumePlayback && this.Visibility == Visibility.Visible && this.HasSource)
@@ -939,6 +1001,17 @@ namespace Timelapse.Controls
             GlobalReferences.TimelapseState.VideoRepeat = CBRepeat.IsChecked == true;
         }
 
+        private void CBMotionBbox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            bool enabled = this.CBMotionBbox.IsChecked == true;
+            GlobalReferences.TimelapseState.VideoMotionBboxEnabled = enabled;
+            this.lastMotionSubmittedTicks = long.MinValue;
+            if (!enabled)
+            {
+                this.InvalidateMotionAnalysis();
+            }
+        }
+
         // The Open ExternalPlayer button
         private void OpenExternalPlayer_Click(object sender, RoutedEventArgs e)
         {
@@ -958,6 +1031,67 @@ namespace Timelapse.Controls
             {
                 ShowPosition();
             }
+        }
+
+        private void TimerMotionAnalysis_Tick(object sender, EventArgs e)
+        {
+            bool enabled = GlobalReferences.TimelapseState.VideoMotionBboxEnabled;
+            if (this.CBMotionBbox.IsChecked != enabled)
+            {
+                this.CBMotionBbox.IsChecked = enabled;
+            }
+
+            if (!enabled || this.isKeyboardSeeking || !this.isSourceReady || !this.IsVisible || !this.HasSource || !this.player.CanPlay ||
+                Volatile.Read(ref this.motionShutdownRequested) != 0)
+            {
+                if (!enabled)
+                {
+                    this.ClearMotionBoundingBoxes();
+                }
+                return;
+            }
+
+            long pts = this.player.CurTime;
+            if (pts == this.lastMotionSubmittedTicks || Interlocked.CompareExchange(ref this.motionAnalysisInFlight, 1, 0) != 0)
+            {
+                return;
+            }
+
+            this.lastMotionSubmittedTicks = pts;
+            long generation = Volatile.Read(ref this.motionGeneration);
+            string sourceId = this.sourceUri.LocalPath;
+            MotionBboxSettings settings = this.GetMotionBboxSettings();
+            _ = Task.Run(() => this.CaptureAndAnalyzeMotionFrame(sourceId, generation, pts, settings))
+                .ContinueWith(task =>
+                {
+                    try
+                    {
+                        if (task.Status == TaskStatus.RanToCompletion && task.Result != null &&
+                            Volatile.Read(ref this.motionShutdownRequested) == 0)
+                        {
+                            this.QueueMotionPresentation(task.Result);
+                        }
+                        else if (task.IsFaulted)
+                        {
+                            Interlocked.Exchange(ref this.lastMotionSubmittedTicks, long.MinValue);
+                            Debug.WriteLine($"Motion BBox analysis failed: {task.Exception?.GetBaseException().Message}");
+                        }
+                        else if (task.Status == TaskStatus.RanToCompletion && task.Result == null)
+                        {
+                            // A decoder transition can briefly return no snapshot. Permit a
+                            // retry even while paused at the same PTS.
+                            Interlocked.Exchange(ref this.lastMotionSubmittedTicks, long.MinValue);
+                        }
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref this.motionAnalysisInFlight, 0);
+                        if (Volatile.Read(ref this.motionShutdownRequested) != 0)
+                        {
+                            this.motionBboxEngine.Dispose();
+                        }
+                    }
+                }, TaskScheduler.Default);
         }
         #endregion
 
@@ -987,6 +1121,148 @@ namespace Timelapse.Controls
         {
             this.Pause();
         }
+        #endregion
+
+        #region Live motion bounding boxes
+
+        private MotionBboxSettings GetMotionBboxSettings()
+        {
+            Timelapse.State.TimelapseState state = GlobalReferences.TimelapseState;
+            if (!Enum.TryParse(state.VideoMotionBboxAlgorithm, true, out MotionBboxAlgorithm algorithm))
+            {
+                algorithm = MotionBboxAlgorithm.FrameDifference;
+            }
+            if (!Enum.TryParse(state.VideoMotionBboxBottomBandMode, true, out BottomBandMode bottomBandMode))
+            {
+                bottomBandMode = BottomBandMode.Automatic;
+            }
+            return new MotionBboxSettings
+            {
+                AnalysisWidth = 640,
+                Algorithm = algorithm,
+                DifferenceThreshold = state.VideoMotionBboxDifferenceThreshold,
+                PaddingFactor = state.VideoMotionBboxPadding,
+                BottomBandMode = bottomBandMode,
+                ManualBottomBandPixels = state.VideoMotionBboxManualBottomBandPixels
+            }.Validated();
+        }
+
+        private MotionBboxResult CaptureAndAnalyzeMotionFrame(string sourceId, long generation, long presentationTimestampTicks, MotionBboxSettings settings)
+        {
+            BitmapSource snapshot = this.player.TakeSnapshotToBitmapSource((uint)settings.AnalysisWidth, 0);
+            if (snapshot == null || snapshot.PixelWidth <= 0 || snapshot.PixelHeight <= 0)
+            {
+                return null;
+            }
+
+            BitmapSource bgra = snapshot.Format == PixelFormats.Bgra32
+                ? snapshot
+                : new FormatConvertedBitmap(snapshot, PixelFormats.Bgra32, null, 0);
+            int stride = bgra.PixelWidth * 4;
+            int bufferLength = stride * bgra.PixelHeight;
+            byte[] pixels = ArrayPool<byte>.Shared.Rent(bufferLength);
+            try
+            {
+                bgra.CopyPixels(pixels, stride, 0);
+                return this.motionBboxEngine.ProcessBgra(
+                    pixels,
+                    bgra.PixelWidth,
+                    bgra.PixelHeight,
+                    stride,
+                    presentationTimestampTicks,
+                    sourceId,
+                    generation,
+                    settings);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(pixels);
+            }
+        }
+
+        private void PresentMotionBoundingBoxes(MotionBboxResult result)
+        {
+            if (!GlobalReferences.TimelapseState.VideoMotionBboxEnabled || !this.IsVisible || this.sourceUri == null ||
+                result.GenerationId != Volatile.Read(ref this.motionGeneration) ||
+                !string.Equals(result.SourceId, this.sourceUri.LocalPath, StringComparison.OrdinalIgnoreCase) ||
+                Math.Abs(this.player.CurTime - result.PresentationTimestampTicks) > TimeSpan.FromMilliseconds(750).Ticks)
+            {
+                return;
+            }
+
+            if (result.Candidates.Count > 0)
+            {
+                // A drag performed while no annotations were visible intentionally skipped
+                // WPF overlay composition. Refresh the transform before the next live box.
+                this.ApplyVideoOverlayTransform();
+            }
+            this.lastMotionResult = result;
+            Point videoSize = this.GetActualVideoSize();
+            double offsetX = (this.FlyleafHostActive.ActualWidth - videoSize.X) / 2.0;
+            double offsetY = (this.FlyleafHostActive.ActualHeight - videoSize.Y) / 2.0;
+            for (int index = 0; index < this.motionRectangles.Length; index++)
+            {
+                Rectangle rectangle = this.motionRectangles[index];
+                if (index >= result.Candidates.Count)
+                {
+                    rectangle.Visibility = Visibility.Collapsed;
+                    continue;
+                }
+
+                MotionCandidate candidate = result.Candidates[index];
+                rectangle.Visibility = Visibility.Visible;
+                rectangle.Opacity = candidate.IsHeld ? 0.55 : 1.0;
+                rectangle.Width = Math.Max(1.0, candidate.Width * videoSize.X);
+                rectangle.Height = Math.Max(1.0, candidate.Height * videoSize.Y);
+                Canvas.SetLeft(rectangle, offsetX + candidate.X * videoSize.X);
+                Canvas.SetTop(rectangle, offsetY + candidate.Y * videoSize.Y);
+            }
+        }
+
+        private void QueueMotionPresentation(MotionBboxResult result)
+        {
+            // Coalesce completed results as well as analysis requests. If the UI thread is
+            // briefly busy, only the newest result is retained and at most one dispatcher
+            // operation is pending.
+            Interlocked.Exchange(ref this.pendingMotionResult, result);
+            if (Interlocked.CompareExchange(ref this.motionPresentationScheduled, 1, 0) == 0)
+            {
+                _ = this.Dispatcher.InvokeAsync(this.PresentLatestMotionResult, DispatcherPriority.Render);
+            }
+        }
+
+        private void PresentLatestMotionResult()
+        {
+            MotionBboxResult result = Interlocked.Exchange(ref this.pendingMotionResult, null);
+            if (result != null)
+            {
+                this.PresentMotionBoundingBoxes(result);
+            }
+            Interlocked.Exchange(ref this.motionPresentationScheduled, 0);
+            MotionBboxResult newerResult = Volatile.Read(ref this.pendingMotionResult);
+            if (newerResult != null)
+            {
+                this.QueueMotionPresentation(newerResult);
+            }
+        }
+
+        private void InvalidateMotionAnalysis()
+        {
+            Interlocked.Increment(ref this.motionGeneration);
+            this.lastMotionSubmittedTicks = long.MinValue;
+            this.lastMotionResult = null;
+            Interlocked.Exchange(ref this.pendingMotionResult, null);
+            this.ClearMotionBoundingBoxes();
+        }
+
+        private void ClearMotionBoundingBoxes()
+        {
+            foreach (Rectangle rectangle in this.motionRectangles)
+            {
+                rectangle.Visibility = Visibility.Collapsed;
+            }
+        }
+
         #endregion
 
         #region Private Bounding box helpers
@@ -1415,7 +1691,7 @@ namespace Timelapse.Controls
                 viewportHeight * this.videoZoom);
 
             // Avoid waking WPF's transparent overlay compositor when no annotations exist.
-            if (this.VideoOverlayCanvas.Children.Count > 0)
+            if (this.VideoOverlayCanvas.Children.Count > 0 || this.lastMotionResult?.Candidates.Count > 0)
             {
                 this.ApplyVideoOverlayTransform();
             }
@@ -1433,6 +1709,10 @@ namespace Timelapse.Controls
             // Minor inefficiency: SizeChanged is invoked twice when Timelapse is first started on a video
             this.UpdateVideoLayout();
             this.UpdateBoundingBoxes();
+            if (this.lastMotionResult != null)
+            {
+                this.PresentMotionBoundingBoxes(this.lastMotionResult);
+            }
         }
         #endregion
 

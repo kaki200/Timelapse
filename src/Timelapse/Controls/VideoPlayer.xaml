@@ -65,9 +65,19 @@
                             HorizontalAlignment="Left"
                             VerticalAlignment="Top"
                             Focusable="False">
-                <Canvas Name="VideoOverlayCanvas"
-                        Background="Transparent"
-                        Focusable="False" />
+                <Grid Name="VideoOverlayRoot"
+                      Background="Transparent"
+                      Focusable="False">
+                    <!-- Stored recognition boxes and live motion boxes deliberately use
+                         separate layers so position refreshes cannot erase live motion. -->
+                    <Canvas Name="VideoOverlayCanvas"
+                            Background="Transparent"
+                            Focusable="False" />
+                    <Canvas Name="MotionOverlayCanvas"
+                            Background="Transparent"
+                            Focusable="False"
+                            IsHitTestVisible="False" />
+                </Grid>
             </fl:FlyleafHost>
         </Canvas>
         <StackPanel Grid.Row="1" Grid.Column="0" HorizontalAlignment="Center">
@@ -196,7 +206,7 @@
                 </StackPanel>
 
                 <!--Video Playback controls (speed, autoreplay, repeat)-->
-                <GroupBox Grid.Row="0" Grid.Column="2" Margin="5,0,0,0" Width ="255" Height="66" Foreground="LightGray" BorderThickness=".4" VerticalAlignment="Top" HorizontalAlignment="Left">
+                <GroupBox Grid.Row="0" Grid.Column="2" Margin="5,0,0,0" Width ="330" Height="66" Foreground="LightGray" BorderThickness=".4" VerticalAlignment="Top" HorizontalAlignment="Left">
                     <GroupBox.Header>
                         Options
                     </GroupBox.Header>
@@ -215,6 +225,8 @@
                             <CheckBox Name="CBAutoPlay" Content="AutoPlay" Focusable="False" VerticalAlignment="Center"  Margin="5,0,0,0" Foreground="White"/>
                             <CheckBox Name="CBRepeat" Content="Repeat" Focusable="False" VerticalAlignment="Center" Margin="5,0,0,0" Foreground="White"/>
                             <CheckBox Name="CBMute" Content="Mute" Focusable="False" VerticalAlignment="Center" Margin="5,0,0,0" Foreground="White"/>
+                            <CheckBox Name="CBMotionBbox" Content="Motion BBox" Focusable="False" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="White"
+                                      ToolTip="Show lightweight live motion bounding boxes. Detailed settings are under Video Player Options."/>
                         </StackPanel>
                     </StackPanel>
                 </GroupBox>

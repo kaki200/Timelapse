@@ -53,8 +53,12 @@ While a brief summary is include, it is your responsibility to visit each web si
 - https://exiftool.org/#license
 
 **FFmpeg**
-- License: GNU LGPL v2.1
-- Free software to share and modify
+- The self-contained fork installer includes FFmpeg 7.1.3, built with GPL,
+  nonfree and version3 disabled: LGPL-2.1-or-later.
+- The exact source archive, Windows build-file patch, configure options and
+  license texts are installed under `Licenses/FFmpeg` and `Licenses/Sources`.
+- Development copies in a local `FFmpeg` folder can have different licenses.
+  Installer builds exclude those files and verify the dedicated payload.
 - https://ffmpeg.org/legal.html
 
 ---
@@ -71,10 +75,15 @@ While a brief summary is include, it is your responsibility to visit each web si
 - Free for commercial use
 - https://github.com/Dirkster99/AvalonDock 
 
-**MetadataExtractor + XmpCore** by Drew Noakes
+**MetadataExtractor** by Drew Noakes
 - License: Apache 2.0
 - Free to commercial use
 - https://www.nuget.org/packages/MetadataExtractor/
+
+**XmpCore** by Drew Noakes and contributors, derived from Adobe XMP SDK
+- License: Adobe BSD (3-clause)
+- The Adobe license and original copyright metadata are retained in the installer.
+- https://github.com/drewnoakes/xmp-core-dotnet
 
 **Microsoft EntityFrameworkCore**
 - License: MIT
@@ -86,22 +95,22 @@ While a brief summary is include, it is your responsibility to visit each web si
 - Free for commercial use
 - https://www.newtonsoft.com/json
 
-**NReco Video Converter**
-- License: Non-commercial use only (free version)
-- ⚠️ **Commercial license may be required in some cases - review their terms**
-- Note: Used by Timelapse to convert video frame into bitmap; other conversion options available if needed - Contact Saul Greenberg for more information.
-- https://www.nrecosite.com/video_converter_net.aspx
+NReco.VideoConverter and SixLabors.ImageSharp (including Drawing) are no longer
+shipped. Thumbnails use FFmpeg directly; image adjustments use OpenCV. The old
+ImageSharp package is used only as a test baseline and is not part of the installer.
+The upstream developer's separate certificate is not used or redistributed.
 
-**SixLabors.ImageSharp**
-- License: Six Labors community free developer license granted for Timelapse
-- ⚠️ As Timelapse is open source, it appears that it is free for commercial use. However, you should review their terms to understand restrictions, if any
-- https://sixlabors.com/pricing/
-
-**FlyleafLib / Flyleaf.FFmpeg**
+**FlyleafLib / Flyleaf.FFmpeg.Bindings**
 - License: GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later), as specified by the NuGet packages used by Timelapse
 - FlyleafLib: https://github.com/SuRGeoNix/Flyleaf
-- Flyleaf.FFmpeg: https://www.nuget.org/packages/Flyleaf.FFmpeg/8.0.0.1
+- Flyleaf.FFmpeg.Bindings: https://www.nuget.org/packages/Flyleaf.FFmpeg.Bindings/7.1.1
 - The native FFmpeg libraries included in a packaged release can have additional licensing details based on their exact build configuration. Their corresponding license text and source/build information must be retained when those binaries are redistributed.
+
+**OpenCvSharp4 / OpenCvSharp4.runtime.win**
+- License: Apache License 2.0
+- Used for the optional lightweight motion bounding-box overlay. The managed and Windows x64 native packages are kept at the same version.
+- https://github.com/shimat/opencvsharp
+- https://www.nuget.org/packages/OpenCvSharp4/
 
 **System.Data.SQLite**
 - License: Public Domain
@@ -134,5 +143,5 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ---
 
-**Last Updated:** 2026-01-12
+**Last Updated:** 2026-11-16
 **Timelapse Version:** 2.5.0.1+

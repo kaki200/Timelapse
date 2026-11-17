@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using Timelapse.Constant;
 using Timelapse.Database;
@@ -11,6 +13,7 @@ using Timelapse.DataTables;
 using Timelapse.DebuggingSupport;
 using Timelapse.Enums;
 using Timelapse.Util;
+using Control = Timelapse.Constant.Control;
 
 namespace Timelapse.ControlsDataEntry
 {
@@ -26,6 +29,7 @@ namespace Timelapse.ControlsDataEntry
         public Dictionary<string, DataEntryControl> ControlsByDataLabelForExport { get; }
 
         private DataEntryHandler dataEntryHandler;
+        private bool isVerticalLayout;
         #endregion
 
         #region Constructor
@@ -35,6 +39,7 @@ namespace Timelapse.ControlsDataEntry
             Controls = [];
             ControlsByDataLabelThatAreVisible = [];
             ControlsByDataLabelForExport = [];
+            SizeChanged += (_, _) => UpdateVerticalWidths();
         }
         #endregion
 
@@ -251,8 +256,63 @@ namespace Timelapse.ControlsDataEntry
             dataEntryHandler = dataEntryPropagator;
 
             UpdateShortcutLabels();
+            RebuildControlLayout();
         }
         #endregion
+
+        public void SetVerticalLayout(bool vertical)
+        {
+            if (isVerticalLayout == vertical) return;
+            isVerticalLayout = vertical;
+            RebuildControlLayout();
+        }
+
+        private void RebuildControlLayout()
+        {
+            if (ControlGrid.Parent is not FlowDocument document) return;
+            // Detach explicitly instead of clearing Inlines: RichTextBox can otherwise
+            // try to serialize a MultiChoice control's ObservableCollection.
+            foreach (DataEntryControl control in Controls)
+            {
+                if (control.Container.Parent is InlineUIContainer inline) inline.Child = null;
+            }
+            Paragraph paragraph = new() { Margin = new Thickness(0) };
+            document.Blocks.Remove(ControlGrid);
+            document.Blocks.Add(paragraph);
+            ControlGrid = paragraph;
+            int flagIndex = 0;
+            foreach (DataEntryControl control in Controls)
+            {
+                bool flag = control is DataEntryFlag;
+                control.Container.Orientation = isVerticalLayout && !flag ? Orientation.Vertical : Orientation.Horizontal;
+                control.Container.Height = isVerticalLayout && !flag ? double.NaN : 35;
+                control.Container.Margin = isVerticalLayout ? new Thickness(0, 0, 0, 4) : new Thickness(0, 0, 10, 0);
+                if (control is DataEntryFlag flagControl)
+                {
+                    flagControl.ApplyItemAppearance(flagIndex++, isVerticalLayout);
+                }
+                if (isVerticalLayout && paragraph.Inlines.Count > 0) paragraph.Inlines.Add(new LineBreak());
+                paragraph.Inlines.Add(control.Container);
+            }
+            UpdateVerticalWidths();
+        }
+
+        private void UpdateVerticalWidths()
+        {
+            double width = Math.Max(80, ActualWidth - 12);
+            foreach (DataEntryControl control in Controls)
+            {
+                control.Container.Width = isVerticalLayout ? width : double.NaN;
+                if (control.GetContentControl is FrameworkElement content)
+                {
+                    content.MaxWidth = isVerticalLayout ? width - 12 : double.PositiveInfinity;
+                }
+                if (control is DataEntryFlag flag)
+                {
+                    flag.LabelControl.MaxWidth = isVerticalLayout ? Math.Max(40, width - 36) : double.PositiveInfinity;
+                }
+            }
+        }
 
         public void UpdateShortcutLabels()
         {

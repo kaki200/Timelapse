@@ -41,6 +41,8 @@ namespace Timelapse.Extensions
                 ThrowIf.IsNullArgument(timelapse, nameof(timelapse));
 
                 bool isResourceFile = false;
+                bool dockDataEntryRight = layoutKey == AvalonLayoutTags.DataEntryOnRight;
+                double dataEntryWidth = 320;
                 string layoutName;
 
                 // Layouts are loaded from either the registry or from a resource file
@@ -49,6 +51,7 @@ namespace Timelapse.Extensions
                 switch (layoutKey)
                 {
                     case AvalonLayoutTags.DataEntryOnTop:
+                    case AvalonLayoutTags.DataEntryOnRight:
                         layoutName = AvalonLayoutResourcePaths.DataEntryOnTop;
                         isResourceFile = true;
                         break;
@@ -79,6 +82,11 @@ namespace Timelapse.Extensions
                         result = timelapse.AvalonLayout_TryLoadFromRegistry(layoutName);
                         if (result)
                         {
+                            XmlDocument savedLayout = new();
+                            savedLayout.LoadXml(timelapse.State.GetFromRegistry(layoutName));
+                            dockDataEntryRight = savedLayout.DocumentElement?.GetAttribute("DataEntryDockedRight") == "true";
+                            if (double.TryParse(savedLayout.DocumentElement?.GetAttribute("DataEntryWidth"), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double savedWidth)) dataEntryWidth = savedWidth;
                             timelapse.AvalonLayout_LoadWindowPositionAndSizeFromRegistry(layoutName + AvalonDockValues.WindowRegistryKeySuffix);
                             timelapse.AvalonLayout_LoadWindowMaximizeStateFromRegistry(layoutName + AvalonDockValues.WindowMaximizeStateRegistryKeySuffix);
                         }
@@ -93,6 +101,7 @@ namespace Timelapse.Extensions
                 }
                 if (result == false)
                 {
+                    timelapse.SetDataEntryPanelDockedRight(false);
                     // We are trying to load the last-used layout, but there isn't one. As a fallback, 
                     // we use the default configuration as specified in the XAML: - all tiled with the data entry on top. 
                     // Eve so, we check to see if the window position and size were saved; if they aren't there, it defaults to a reasonable size and position.
@@ -108,6 +117,7 @@ namespace Timelapse.Extensions
                 timelapse.DataGridPane.IsActiveChanged -= timelapse.DataGridPane_IsActiveChanged;
                 //timelapse.FolderMetadataPane.IsActiveChanged -= timelapse.FolderMetadataPane_IsActiveChanged;
                 timelapse.AvalonDock_ResetAfterDeserialize();
+                timelapse.SetDataEntryPanelDockedRight(dockDataEntryRight, dataEntryWidth);
                 timelapse.DataGridPane.IsActiveChanged += timelapse.DataGridPane_IsActiveChanged;
                 //timelapse.FolderMetadataPane.IsActiveChanged += timelapse.FolderMetadataPane_IsActiveChanged;
                 timelapse.DataEntryControlPanel.PropertyChanging += timelapse.LayoutAnchorable_PropertyChanging;
@@ -381,7 +391,8 @@ namespace Timelapse.Extensions
                 // We need to save both layouts
                 string layoutXml1 = AvalonLayout_GenerateXml(timelapse.DockingManager1);
                 string layoutXml2 = AvalonLayout_GenerateXml(timelapse.DockingManager2);
-                string combinedLayoutXml = AvalonLayout_WrapLayoutsIntoSingleLayout(layoutXml1, layoutXml2);
+                string combinedLayoutXml = AvalonLayout_WrapLayoutsIntoSingleLayout(layoutXml1, layoutXml2,
+                    timelapse.IsDataEntryPanelDockedRight, timelapse.DataEntryPanelWidth);
                 timelapse.AvalonLayout_TrySaveWindowPositionAndSizeAndMaximizeState(registryKey);
                 if (!string.IsNullOrEmpty(combinedLayoutXml.Trim()))
                 {
@@ -417,7 +428,7 @@ namespace Timelapse.Extensions
             return xmlText.ToString().Trim();
         }
 
-        private static string AvalonLayout_WrapLayoutsIntoSingleLayout(string xmlLayout1, string xmlLayout2)
+        private static string AvalonLayout_WrapLayoutsIntoSingleLayout(string xmlLayout1, string xmlLayout2, bool dockDataEntryRight, double dataEntryWidth)
         {
             XmlDocument doc = new();
 
@@ -430,6 +441,8 @@ namespace Timelapse.Extensions
 
             //(2) string.Empty makes cleaner code
             XmlElement element1 = doc.CreateElement(string.Empty, "Layouts", string.Empty);
+            element1.SetAttribute("DataEntryDockedRight", dockDataEntryRight ? "true" : "false");
+            element1.SetAttribute("DataEntryWidth", dataEntryWidth.ToString(System.Globalization.CultureInfo.InvariantCulture));
             doc.AppendChild(element1);
 
             // Insert Layout1
