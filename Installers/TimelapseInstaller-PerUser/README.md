@@ -1,6 +1,6 @@
 # Self-contained installer for the kaki200 fork
 
-Double-click `Timelapse-Kaki-2.5.0.9-win-x64.msi`, accept the licenses, and install.
+Double-click `Timelapse-Kaki-2.5.0.10-win-x64.msi`, accept the licenses, and install.
 Then use the desktop or Start Menu shortcut **Timelapse (kaki200 fork)**.
 No separate ExifTool, FFmpeg, .NET, Perl, or VC runtime setup and no PATH editing
 are needed. The default directory is `%LOCALAPPDATA%\Programs\Timelapse-Kaki`.
@@ -29,16 +29,17 @@ legacy binaries and the unused OpenCV FFmpeg plugin, and collects license texts
 and corresponding LGPL sources. Required-file and license checks run before WiX.
 `GenerateFileList.ps1` creates stable component IDs and preserves the payload tree.
 
-Output: `Installers\bin\Release\Timelapse-Kaki-2.5.0.9-win-x64.msi`.
+Output: `Installers\bin\Release\Timelapse-Kaki-2.5.0.10-win-x64.msi`.
 The exact staging directory is recorded in `latest-publish-path.txt` beside it.
 `BuildInstaller.ps1 -SkipPrepare` reuses an already verified dependency payload.
 Caches and staging folders are ignored by Git. No publisher signing certificate
 is borrowed from upstream; the local MSI is unsigned unless separately signed
 by the fork owner.
 
-The old `UpdateVersion.ps1` is no longer invoked. MSI version `2.5.9` maps to app
-version `2.5.0.9`, because Windows Installer compares only the first three fields.
-When releasing a newer package, increment both versions in the build definition.
+The old `UpdateVersion.ps1` is no longer invoked. MSI version `2.5.10` maps to app
+version `2.5.0.10`, because Windows Installer compares only the first three fields.
+The package version and filename are derived from the application's FileVersion.
+Increment AssemblyVersion and FileVersion in `Timelapse.csproj` for a new release.
 
 ## Licenses and sources
 

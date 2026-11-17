@@ -34,16 +34,20 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Package notice collection failed' }
     & "$PSScriptRoot\..\WriteNativeNotices.ps1" -PublishDir $publish -Cache $cache
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo("$publish\Timelapse.exe").FileVersion
-    $msiVersion = '2.5.9' # MSI compares three fields; distinct from upstream 2.5.0.x releases.
+    $appVersion = [Version]$version
+    # MSI compares three fields. Our 2.5.0.10 app is package 2.5.10.
+    if ($appVersion.Build -ne 0) { throw 'Review the MSI version mapping before changing the application build field' }
+    $msiVersion = '{0}.{1}.{2}' -f $appVersion.Major,$appVersion.Minor,$appVersion.Revision
+    $msiName = "Timelapse-Kaki-$version-win-x64.msi"
     & "$PSScriptRoot\GenerateFileList.ps1" -SourceDir $publish -OutputFile "$stage\Files.wxs"
     Push-Location $PSScriptRoot
     try {
         & wix build Product.wxs "$stage\Files.wxs" -arch x64 -ext WixToolset.UI.wixext `
-            -out "$OutputDirectory\Timelapse-Kaki-2.5.0.9-win-x64.msi" `
+            -out "$OutputDirectory\$msiName" `
             -d "SourceDir=$publish" -d "ProductVersion=$msiVersion"
         if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed' }
     } finally { Pop-Location }
-    $msi = Join-Path $OutputDirectory 'Timelapse-Kaki-2.5.0.9-win-x64.msi'
+    $msi = Join-Path $OutputDirectory $msiName
     Get-FileHash -LiteralPath $msi -Algorithm SHA256 | Format-List
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'latest-publish-path.txt'), $publish)
     Write-Host "Installer: $msi"

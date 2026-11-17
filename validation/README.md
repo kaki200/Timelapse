@@ -57,6 +57,18 @@ frames/s for a 1080p H.264 video. Display updates were approximately 15/s and
 neither run had failed captures. These figures are hardware/content dependent,
 not a guarantee for every computer or video.
 
-The 2026-11-17 UI changes built successfully and the modified application was
-launched. Full interactive verification of the right sidebar and scrolling has
-not yet been completed.
+## Data-entry layout regression checks
+
+Build `DataEntryLayoutTests` with `-p:TimelapseBin=<absolute-published-app-folder>`.
+Copy its DLL into a separate test copy of that published folder, then run it with
+the app's runtime configuration and dependency manifest:
+
+```powershell
+dotnet exec --runtimeconfig '<test-copy>/Timelapse.runtimeconfig.json' --depsfile '<test-copy>/Timelapse.deps.json' '<test-copy>/DataEntryLayoutTests.dll'
+```
+
+Twenty in-process WPF checks passed on 2026-11-17: vertical row alignment,
+scrollable content, bounded widths, long-label wrapping, adjacent colors,
+checkbox alignment, ten layout-switch round trips, retained flag/multi-choice
+values, narrow resizing and safe reset. This is an automated measure/arrange
+test, not a substitute for full interactive testing on every display setup.

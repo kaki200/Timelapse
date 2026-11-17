@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Cache
 )
 $ErrorActionPreference = 'Stop'
-$assets = Get-Content -LiteralPath $AssetsFile -Raw | ConvertFrom-Json
+$assets = Get-Content -LiteralPath $AssetsFile -Raw -Encoding UTF8 | ConvertFrom-Json
 $licenses = Join-Path $PublishDir 'Licenses'
 New-Item -ItemType Directory -Force "$licenses\Packages","$licenses\Texts","$Cache\license-texts" | Out-Null
 $texts = @('Apache-2.0','MIT','MS-PL','BSD-2-Clause','BSD-3-Clause','LGPL-2.1-or-later','LGPL-3.0-or-later','GPL-3.0-or-later','Artistic-1.0-Perl','CC0-1.0')
@@ -31,7 +31,7 @@ foreach ($property in $assets.libraries.PSObject.Properties) {
     }
     if (-not $packageRoot) { throw "Missing restored package: $($property.Name)" }
     $nuspec = Get-ChildItem -LiteralPath $packageRoot -Filter '*.nuspec' -File | Select-Object -First 1
-    [xml]$document = Get-Content -LiteralPath $nuspec.FullName -Raw
+    [xml]$document = Get-Content -LiteralPath $nuspec.FullName -Raw -Encoding UTF8
     $metadata = $document.package.metadata
     $destination = Join-Path "$licenses\Packages" ($property.Name.Replace('/','-'))
     New-Item -ItemType Directory -Force $destination | Out-Null

@@ -2,7 +2,7 @@
 
 ## このフォークのインストーラー
 
-`Timelapse-Kaki-2.5.0.9-win-x64.msi` をダブルクリックしてインストールした後、
+`Timelapse-Kaki-2.5.0.10-win-x64.msi` をダブルクリックしてインストールした後、
 デスクトップの **Timelapse (kaki200 fork)** を起動してください。
 ExifTool・Perl・LGPL版FFmpeg・.NET・必要なVCランタイムを同梱しているため、
 個別のダウンロードやPATH設定は不要です。
