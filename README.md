@@ -5,8 +5,7 @@
 `Timelapse-Kaki-2.5.0.9-win-x64.msi` をダブルクリックしてインストールした後、
 デスクトップの **Timelapse (kaki200 fork)** を起動してください。
 ExifTool・Perl・LGPL版FFmpeg・.NET・必要なVCランタイムを同梱しているため、
-個別のダウンロードやPATH設定は不要です。動画の動体枠は、再生操作欄の
-**Motion BBox** をONにして動画を再生すると表示されます。
+個別のダウンロードやPATH設定は不要です。
 
 ビルド方法と同梱ライセンスは [インストーラーの説明](Installers/TimelapseInstaller-PerUser/README.md)
 および [第三者ライセンスの説明](Installers/THIRD-PARTY-NOTICES.md) を参照してください。
