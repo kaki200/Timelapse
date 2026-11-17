@@ -1,5 +1,7 @@
 # Local validation tools
 
+**English** | [日本語](../docs/ja/VALIDATION.md)
+
 These small Windows x64 / .NET 10 projects exercise the production implementation.
 Build output, local videos, copied templates/databases, installation logs and
 machine-specific measurement folders are deliberately not committed.

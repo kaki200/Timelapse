@@ -1,36 +1,38 @@
 # Timelapse 2.5.0.10 (kaki200 fork)
 
-Windows x64向けの、必要なランタイムを同梱したインストーラーです。
+**English** | [日本語](https://github.com/kaki200/Timelapse/blob/develop/docs/ja/RELEASE-v2.5.0.10.md)
 
-## インストール
+Self-contained installer for Windows x64, with the required runtimes included.
 
-1. Assetsの **Timelapse-Kaki-2.5.0.10-win-x64.msi** をダウンロードしてダブルクリックします。
-2. インストール後、デスクトップまたはスタートメニューの **Timelapse (kaki200 fork)** を起動します。
+## Installation
 
-FFmpeg・ExifTool（Perlを含む）・.NET Desktop Runtime・必要なVCランタイムを同梱しています。
-別途ダウンロードやPATH設定は不要です。以前の同名forkインストーラーから更新できます。
-念のため、利用中のテンプレート・データベースは事前にバックアップしてください。
+1. Download **Timelapse-Kaki-2.5.0.10-win-x64.msi** from the release assets and double-click it.
+2. After installation, launch **Timelapse (kaki200 fork)** from the desktop or Start Menu.
 
-## 変更内容
+FFmpeg, ExifTool (including Perl), .NET Desktop Runtime, and the required Visual C++ runtime are bundled.
+No separate downloads or PATH configuration are needed. This package can upgrade the previous installer with the same fork identity.
+Back up your templates and databases before updating as a precaution.
 
-- 動画の軽量な動体BBox表示を追加。再生操作欄の **Motion BBox** で切り替えます。
-- BBoxの線を細く変更（主枠1.5・補助枠1）。
-- **Window → Data Entry Panel on the right (same window)** で、同じウィンドウの右側にチェック項目を縦一列で配置できます。
-- チェック項目を淡い背景色で色分け。長いラベルは折り返し、長い一覧はスクロールできます。
-- 右側パネルの配置・幅をウィンドウレイアウトと一緒に保存します。
-- キーボードショートカット、キーを押している間の早送り・巻き戻し、ホイール拡大縮小・ドラッグ移動を維持しています。
-- 画像調整とサムネイル取得の依存関係を整理しました。
+## Changes
 
-## 確認
+- Added lightweight live motion bounding boxes for videos, enabled with **Motion BBox** in the playback controls.
+- Made BBox outlines thinner: 1.5 display units for the main box and 1 for additional boxes.
+- Added **Window > Data Entry Panel on the right (same window)** to arrange checkboxes vertically beside the video without opening a separate window.
+- Color-coded flag fields with subtle backgrounds. Long labels wrap, and long lists can scroll.
+- Save the sidebar placement and width with the window layout.
+- Retained keyboard shortcuts, hold-to-fast-forward/rewind, mouse-wheel zoom, and drag-to-pan controls.
+- Simplified dependencies for image adjustments and thumbnail extraction.
 
-- 動体BBoxのコアテスト10件、画像調整の互換性テスト14件、データ入力欄のレイアウトチェック20項目を通過。
-- 配布用フォルダーでFFmpeg・OpenCV・ExifTool・サムネイル取得のスモークテストを通過。
-- このラップトップでの再生・フレーム取得・解析・表示を含む計測では、720p AVIで約14.9fps、1080p H.264で約14.8fps（前回の同一依存ライブラリ構成での測定）。性能は動画とPCに依存します。
+## Validation
 
-## 注意・ライセンス
+- Passed 10 motion BBox core tests, 14 image-adjustment compatibility cases, and 20 data-entry layout checks.
+- Passed smoke tests for FFmpeg, OpenCV, ExifTool, and thumbnail extraction in the distribution folder.
+- Previous measurements on this laptop with the same dependency configuration, including playback, capture, analysis, and display, reached approximately 14.9 fps for 720p AVI and 14.8 fps for 1080p H.264. Performance depends on the video and hardware.
 
-- 未署名のため、Windowsやブラウザーの警告が出る場合があります。
-- 上流の公式配布版ではなく、kaki200によるforkです。本体側へのPRは作成していません。
-- Timelapse本体のCC BY-NC-SA 4.0（非商用）を維持しています。第三者コンポーネントにはそれぞれのライセンスが適用されます。
-- FFmpegはLGPL構成です。ライセンス文書、対応ソース、適用パッチ・ビルド設定をインストール先の **Licenses** に同梱しています。
-- **checksums-SHA256.txt** でダウンロードしたMSIのSHA-256を確認できます。
+## Notes and licenses
+
+- The installer is unsigned; Windows or your browser may display a warning.
+- This is kaki200's fork, not an official upstream distribution. No pull request has been opened against upstream.
+- Timelapse retains its CC BY-NC-SA 4.0 non-commercial license. Third-party components retain their own licenses.
+- FFmpeg uses an LGPL configuration. License texts, corresponding sources, patches, and build settings are included in the installed **Licenses** folder.
+- Use **checksums-SHA256.txt** from the release assets to verify the downloaded MSI's SHA-256.

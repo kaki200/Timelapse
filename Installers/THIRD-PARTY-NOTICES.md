@@ -1,5 +1,7 @@
 # Timelapse (kaki200 fork): redistributed components
 
+**English** | [日本語](https://github.com/kaki200/Timelapse/blob/develop/docs/ja/THIRD-PARTY-NOTICES.md)
+
 Timelapse: Copyright 2011+ Greenberg Consulting Inc. and University of Calgary.
 Fork changes: keyboard shortcuts, Flyleaf playback and navigation fixes, live motion
 bounding boxes, and redistributable installer integration. Source:

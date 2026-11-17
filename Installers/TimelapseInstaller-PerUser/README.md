@@ -1,5 +1,7 @@
 # Self-contained installer for the kaki200 fork
 
+**English** | [日本語](../../docs/ja/INSTALLER.md)
+
 Double-click `Timelapse-Kaki-2.5.0.10-win-x64.msi`, accept the licenses, and install.
 Then use the desktop or Start Menu shortcut **Timelapse (kaki200 fork)**.
 No separate ExifTool, FFmpeg, .NET, Perl, or VC runtime setup and no PATH editing

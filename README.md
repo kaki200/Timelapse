@@ -2,6 +2,8 @@
 
 ## Installer for this fork
 
+**English** | [日本語 — fork additions only](docs/ja/README.md)
+
 Double-click `Timelapse-Kaki-2.5.0.10-win-x64.msi` to install, then launch
 **Timelapse (kaki200 fork)** using the desktop shortcut.
 The installer includes ExifTool, Perl, an LGPL-only FFmpeg build, .NET, and the
